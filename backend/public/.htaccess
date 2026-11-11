@@ -1,0 +1,10 @@
+# Send every request that is not a real file to index.php
+Options -Indexes
+RewriteEngine On
+
+# Keep the Authorization header (Apache drops it by default on some setups)
+RewriteCond %{HTTP:Authorization} .
+RewriteRule .* - [E=HTTP_AUTHORIZATION:%{HTTP:Authorization}]
+
+RewriteCond %{REQUEST_FILENAME} !-f
+RewriteRule ^ index.php [QSA,L]

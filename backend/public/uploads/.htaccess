@@ -1,0 +1,5 @@
+Options -Indexes
+# Only images live here. Never execute scripts from uploads.
+<FilesMatch "\.(php|phtml|phar|pl|py|cgi|sh)$">
+    Require all denied
+</FilesMatch>

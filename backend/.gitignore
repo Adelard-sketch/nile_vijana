@@ -1,0 +1,8 @@
+config/config.php
+storage/private/*
+!storage/private/.gitkeep
+storage/logs/*
+!storage/logs/.gitkeep
+public/uploads/*
+!public/uploads/.gitkeep
+!public/uploads/.htaccess

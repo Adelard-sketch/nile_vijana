@@ -1,0 +1,10 @@
+# When the whole project sits inside htdocs (XAMPP), route everything
+# into /public so that config/, src/ and storage/ are never reachable from a browser.
+Options -Indexes
+RewriteEngine On
+
+RewriteCond %{HTTP:Authorization} .
+RewriteRule .* - [E=HTTP_AUTHORIZATION:%{HTTP:Authorization}]
+
+RewriteRule ^public/ - [L]
+RewriteRule ^(.*)$ public/$1 [L]

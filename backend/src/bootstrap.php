@@ -33,6 +33,13 @@ if ($localRequest || env('NV_USE_LOCAL_ENV', false) === true) {
     load_env_file(BASE_PATH . '/.env.local', true);
 }
 
+// Production uses the unprefixed shared database tables. This overrides a stale
+// DB_PREFIX value left in an uploaded .env file.
+if (env('APP_ENV') === 'production') {
+    putenv('DB_PREFIX=');
+    $_ENV['DB_PREFIX'] = '';
+}
+
 $configFile = BASE_PATH . '/config/config.php';
 if (!is_file($configFile)) {
     $msg = 'Missing config/config.php. Copy config/config.example.php to config/config.php and edit it.';

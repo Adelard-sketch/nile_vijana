@@ -1,0 +1,38 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 360">
+  <defs>
+    <linearGradient id="mbg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#120618"/>
+      <stop offset="1" stop-color="#0d1117"/>
+    </linearGradient>
+    <radialGradient id="mglow" cx="40%" cy="50%" r="55%">
+      <stop offset="0" stop-color="#7a0b47" stop-opacity="0.5"/>
+      <stop offset="1" stop-color="#7a0b47" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="mgrad" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#e0569a"/>
+      <stop offset="1" stop-color="#7a0b47"/>
+    </linearGradient>
+  </defs>
+  <rect width="640" height="360" fill="url(#mbg)"/>
+  <circle cx="260" cy="180" r="210" fill="url(#mglow)"/>
+  <!-- vinyl record -->
+  <circle cx="260" cy="180" r="130" fill="#1a0d1f" stroke="rgba(224,86,154,0.15)" stroke-width="1"/>
+  <circle cx="260" cy="180" r="110" fill="none" stroke="rgba(255,255,255,0.05)" stroke-width="8"/>
+  <circle cx="260" cy="180" r="92"  fill="none" stroke="rgba(255,255,255,0.04)" stroke-width="8"/>
+  <circle cx="260" cy="180" r="74"  fill="none" stroke="rgba(255,255,255,0.04)" stroke-width="8"/>
+  <circle cx="260" cy="180" r="56"  fill="none" stroke="rgba(255,255,255,0.04)" stroke-width="8"/>
+  <!-- label -->
+  <circle cx="260" cy="180" r="38" fill="url(#mgrad)"/>
+  <circle cx="260" cy="180" r="8"  fill="rgba(0,0,0,0.6)"/>
+  <!-- play button -->
+  <polygon points="508,100 598,180 508,260" fill="url(#mgrad)" opacity="0.9" rx="8"/>
+  <polygon points="516,115 580,180 516,245" fill="#0d1117"/>
+  <polygon points="524,130 566,180 524,230" fill="url(#mgrad)"/>
+  <!-- stats row -->
+  <rect x="460" y="40" width="130" height="30" rx="8" fill="rgba(224,86,154,0.12)" stroke="rgba(224,86,154,0.3)" stroke-width="1"/>
+  <text x="525" y="60" font-family="system-ui,sans-serif" font-size="11" font-weight="700" fill="#e0569a" text-anchor="middle">12.4K streams</text>
+  <rect x="460" y="78" width="130" height="30" rx="8" fill="rgba(240,162,50,0.1)" stroke="rgba(240,162,50,0.25)" stroke-width="1"/>
+  <text x="525" y="98" font-family="system-ui,sans-serif" font-size="11" font-weight="700" fill="#f0a232" text-anchor="middle">847 favourites</text>
+  <!-- bottom fade -->
+  <rect width="640" height="70" y="290" fill="url(#mbg)" opacity="0.7"/>
+</svg>

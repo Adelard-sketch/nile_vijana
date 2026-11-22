@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 360">
+  <defs>
+    <linearGradient id="wall" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#29344d"/>
+      <stop offset="1" stop-color="#101522"/>
+    </linearGradient>
+    <linearGradient id="desk" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#714326"/>
+      <stop offset="1" stop-color="#38251f"/>
+    </linearGradient>
+  </defs>
+  <rect width="640" height="360" fill="url(#wall)"/>
+  <path d="M0 245h640v115H0z" fill="#171c2a"/>
+  <path d="M40 38h72v104H40zM132 38h72v104h-72zM436 38h72v104h-72zM528 38h72v104h-72z" fill="#7a0b47" opacity=".8"/>
+  <path d="M56 52h40v76H56zM148 52h40v76h-40zM452 52h40v76h-40zM544 52h40v76h-40z" fill="#141d33"/>
+  <rect x="111" y="185" width="418" height="34" rx="8" fill="url(#desk)"/>
+  <path d="M140 219v108h18V219m324 0v108h18V219" fill="#38251f"/>
+  <rect x="231" y="158" width="178" height="48" rx="7" fill="#0b1019" stroke="#f0a232" stroke-width="3"/>
+  <path d="M250 174h12v17h-12zm25 0h12v17h-12zm25 0h12v17h-12zm25 0h12v17h-12zm25 0h12v17h-12zm25 0h12v17h-12z" fill="#f0a232"/>
+  <circle cx="92" cy="210" r="31" fill="#0d1117" stroke="#f0a232" stroke-width="4"/>
+  <circle cx="92" cy="210" r="17" fill="#283348"/>
+  <circle cx="548" cy="210" r="31" fill="#0d1117" stroke="#f0a232" stroke-width="4"/>
+  <circle cx="548" cy="210" r="17" fill="#283348"/>
+  <path d="M320 83v56m-19-20a19 19 0 0 0 38 0v-7h-38z" fill="none" stroke="#f0a232" stroke-linecap="round" stroke-width="7"/>
+  <path d="M320 139v19m-17 0h34" fill="none" stroke="#f0a232" stroke-linecap="round" stroke-width="7"/>
+  <path d="M287 105h-19v37m85-37h19v37" fill="none" stroke="#f0a232" stroke-linecap="round" stroke-width="5"/>
+</svg>

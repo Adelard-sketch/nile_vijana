@@ -1,0 +1,46 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 360">
+  <defs>
+    <linearGradient id="vbg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#130e00"/>
+      <stop offset="1" stop-color="#0d1117"/>
+    </linearGradient>
+    <radialGradient id="vglow" cx="50%" cy="45%" r="50%">
+      <stop offset="0" stop-color="#d29922" stop-opacity="0.3"/>
+      <stop offset="1" stop-color="#d29922" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="vgrad" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#f0c040"/>
+      <stop offset="1" stop-color="#d29922"/>
+    </linearGradient>
+  </defs>
+  <rect width="640" height="360" fill="url(#vbg)"/>
+  <circle cx="320" cy="170" r="220" fill="url(#vglow)"/>
+  <!-- microphone stand base -->
+  <ellipse cx="320" cy="310" rx="60" ry="10" fill="rgba(210,153,34,0.2)"/>
+  <line x1="320" y1="260" x2="320" y2="308" stroke="rgba(210,153,34,0.5)" stroke-width="4" stroke-linecap="round"/>
+  <line x1="280" y1="308" x2="360" y2="308" stroke="rgba(210,153,34,0.5)" stroke-width="4" stroke-linecap="round"/>
+  <!-- microphone body -->
+  <rect x="299" y="140" width="42" height="80" rx="21" fill="url(#vgrad)" opacity="0.9"/>
+  <rect x="299" y="140" width="42" height="80" rx="21" fill="none" stroke="rgba(255,255,255,0.15)" stroke-width="1"/>
+  <!-- mic grille lines -->
+  <line x1="299" y1="165" x2="341" y2="165" stroke="rgba(0,0,0,0.25)" stroke-width="1.5"/>
+  <line x1="299" y1="175" x2="341" y2="175" stroke="rgba(0,0,0,0.25)" stroke-width="1.5"/>
+  <line x1="299" y1="185" x2="341" y2="185" stroke="rgba(0,0,0,0.25)" stroke-width="1.5"/>
+  <line x1="299" y1="195" x2="341" y2="195" stroke="rgba(0,0,0,0.2)" stroke-width="1.5"/>
+  <!-- sound waves left -->
+  <path d="M270 158 Q250 180 270 202" fill="none" stroke="rgba(210,153,34,0.6)" stroke-width="2.5" stroke-linecap="round"/>
+  <path d="M252 142 Q220 180 252 218" fill="none" stroke="rgba(210,153,34,0.4)" stroke-width="2" stroke-linecap="round"/>
+  <path d="M234 126 Q190 180 234 234" fill="none" stroke="rgba(210,153,34,0.2)" stroke-width="1.5" stroke-linecap="round"/>
+  <!-- sound waves right -->
+  <path d="M370 158 Q390 180 370 202" fill="none" stroke="rgba(210,153,34,0.6)" stroke-width="2.5" stroke-linecap="round"/>
+  <path d="M388 142 Q420 180 388 218" fill="none" stroke="rgba(210,153,34,0.4)" stroke-width="2" stroke-linecap="round"/>
+  <path d="M406 126 Q450 180 406 234" fill="none" stroke="rgba(210,153,34,0.2)" stroke-width="1.5" stroke-linecap="round"/>
+  <!-- session chip -->
+  <rect x="30" y="40" width="130" height="34" rx="12" fill="rgba(210,153,34,0.15)" stroke="rgba(210,153,34,0.35)" stroke-width="1"/>
+  <text x="95" y="62" font-family="system-ui,sans-serif" font-size="12" font-weight="700" fill="#d29922" text-anchor="middle">1:1 Sessions</text>
+  <!-- rating -->
+  <rect x="480" y="40" width="130" height="34" rx="12" fill="rgba(240,162,50,0.1)" stroke="rgba(240,162,50,0.3)" stroke-width="1"/>
+  <text x="545" y="62" font-family="system-ui,sans-serif" font-size="12" font-weight="700" fill="#f0a232" text-anchor="middle">★ 4.9 / 5.0</text>
+  <!-- bottom fade -->
+  <rect width="640" height="70" y="290" fill="url(#vbg)" opacity="0.7"/>
+</svg>

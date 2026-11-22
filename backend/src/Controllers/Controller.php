@@ -32,14 +32,25 @@ abstract class Controller
         ];
     }
 
-    /** Phone + provider for a mobile money payment from the request body. */
+    /** Replace "X is required." with the wording a form wants, e.g. "Genre has not been selected." */
+    protected static function missing(array $errors, array $messages): array
+    {
+        foreach ($messages as $field => $message) {
+            if (isset($errors[$field]) && str_ends_with($errors[$field], 'is required.')) {
+                $errors[$field] = $message;
+            }
+        }
+        return $errors;
+    }
+
+    /**
+     * Optional phone + network sent with a payment. With Paystack the buyer chooses card or
+     * mobile money on Paystack's checkout, so both may be empty.
+     */
     protected function paymentPhone(array $data): array
     {
-        $phone = $data['phone'];
-        $provider = $data['provider'] ?? null ?: detect_provider($phone);
-        if (!$provider) {
-            throw HttpException::invalid('Choose your mobile money network', ['provider' => 'MTN_MOMO_RWA or AIRTEL_RWA']);
-        }
-        return [$phone, $provider];
+        $phone = $data['phone'] ?? null;
+        $provider = ($data['provider'] ?? null) ?: ($phone ? detect_provider($phone) : null);
+        return [$phone ?: null, $provider];
     }
 }

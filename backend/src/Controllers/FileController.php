@@ -62,4 +62,41 @@ final class FileController extends Controller
         $name = slugify($item['title']) . '.' . $ext;
         return Response::file(Storage::privatePath($path), Storage::mimeFor($path), $name);
     }
+
+    /**
+     * A short-lived link that lets the owner or an admin listen to a song or beat
+     * that is not public yet (waiting for review or rejected). Built by the API
+     * only for those people, so the audio never becomes public before approval.
+     */
+    public static function listenUrl(string $type, int $id, int $ttl = 7200): string
+    {
+        return url('/api/media/' . Signer::sign(['r' => 'listen', 't' => $type, 'id' => $id], $ttl));
+    }
+
+    /** Short-lived link that downloads a song's full-quality file (see TrackController::download). */
+    public static function downloadUrl(int $trackId, int $ttl = 600): string
+    {
+        return url('/api/media/' . Signer::sign(['r' => 'download', 't' => 'track', 'id' => $trackId], $ttl));
+    }
+
+    /** GET /api/media/{token} — streams the audio behind a listenUrl() link (supports seeking), or downloads a song. */
+    public function listen(Request $req): Response
+    {
+        $p = Signer::verify($req->param('token'));
+        if ($p && ($p['r'] ?? '') === 'download' && ($p['t'] ?? '') === 'track') {
+            $t = DB::one('SELECT title, original_path FROM tracks WHERE id = ?', [(int) $p['id']]) ?? throw HttpException::notFound('Song');
+            $path = (string) $t['original_path'];
+            return Response::file(Storage::privatePath($path), Storage::mimeFor($path), slugify($t['title']) . '.' . pathinfo($path, PATHINFO_EXTENSION));
+        }
+        if (!$p || ($p['r'] ?? '') !== 'listen' || !in_array($p['t'] ?? '', ['track', 'beat'], true)) {
+            throw new HttpException(410, 'This link has expired. Reload the page to get a new one.');
+        }
+        $path = $p['t'] === 'track'
+            ? DB::value('SELECT COALESCE(stream_path, original_path) FROM tracks WHERE id = ?', [(int) $p['id']])
+            : DB::value('SELECT COALESCE(preview_path, mp3_path) FROM beats WHERE id = ?', [(int) $p['id']]);
+        if (!$path) {
+            throw HttpException::notFound('Audio');
+        }
+        return Response::file(Storage::privatePath((string) $path), Storage::mimeFor((string) $path));
+    }
 }

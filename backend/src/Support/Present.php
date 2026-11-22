@@ -17,9 +17,11 @@ final class Present
         return [
             'id'         => (int) $u['id'],
             'name'       => $u['name'],
+            'username'   => $u['username'] ?? null,
             'phone'      => $u['phone'],
             'email'      => $u['email'],
-            'country'    => $u['country'] ?? 'RW',
+            'email_verified' => !empty($u['email_verified_at']),
+            'country'    => $u['country'] ?? 'GH',
             'language'   => $u['language'] ?? 'en',
             'roles'      => $roles ?: ($u['roles'] ?? []),
             'created_at' => $u['created_at'] ?? null,
@@ -37,7 +39,40 @@ final class Present
             'city'       => $c['city'] ?? null,
             'verified'   => (bool) ($c['verified'] ?? false),
             'avatar_url' => upload_url($c['avatar_path'] ?? null),
+            'genres'     => self::csv($c['genres'] ?? null),
+            'members_count'    => isset($c['members_count']) ? (int) $c['members_count'] : null,
+            'experience_years' => isset($c['experience_years']) ? (int) $c['experience_years'] : null,
+            'specialization'   => $c['specialization'] ?? null,
+            'company'          => $c['company'] ?? null,
+            'website'          => $c['website'] ?? null,
         ];
+    }
+
+    /** Creator profile plus private contact details (owner and admin views only). */
+    public static function creatorPrivate(array $c): array
+    {
+        return self::creator($c) + [
+            'contact_email'   => $c['contact_email'] ?? null,
+            'contact_phone'   => $c['contact_phone'] ?? null,
+            'payout_phone'    => $c['payout_phone'] ?? null,
+            'payout_provider' => $c['payout_provider'] ?? null,
+            'created_at'      => $c['created_at'] ?? null,
+        ];
+    }
+
+    /** Review state shared by songs and beats: why it was rejected and when it was decided. */
+    public static function review(array $row): array
+    {
+        return [
+            'review_note'  => $row['review_note'] ?? null,
+            'reviewed_at'  => $row['reviewed_at'] ?? null,
+            'submitted_at' => $row['submitted_at'] ?? null,
+        ];
+    }
+
+    public static function csv(?string $value): array
+    {
+        return $value ? array_values(array_filter(array_map('trim', explode(',', $value)), 'strlen')) : [];
     }
 
     public static function beat(array $b, array $tiers = []): array
@@ -64,8 +99,10 @@ final class Present
                 'slug'       => $b['producer_slug'] ?? null,
             ],
             'licenses'    => array_values(array_map([self::class, 'tier'], $tiers)),
+            'description' => $b['description'] ?? null,
+            'release_date'=> $b['release_date'] ?? null,
             'created_at'  => $b['created_at'],
-        ];
+        ] + self::review($b);
     }
 
     public static function tier(array $t): array
@@ -102,6 +139,9 @@ final class Present
             'plays'        => (int) $t['play_count'],
             'likes'        => isset($t['like_count']) ? (int) $t['like_count'] : null,
             'liked'        => isset($t['liked']) ? (bool) $t['liked'] : null,
+            'saves'        => isset($t['save_count']) ? (int) $t['save_count'] : null,
+            'saved'        => isset($t['saved']) ? (bool) $t['saved'] : null,
+            'allow_download' => (bool) ($t['allow_download'] ?? false),
             'cover_url'    => upload_url($t['cover_path']),
             'stream_url'   => $live ? url('/api/tracks/' . $t['id'] . '/stream') : null,
             'preview_url'  => $t['preview_path'] ? url('/api/tracks/' . $t['id'] . '/preview') : null,
@@ -113,8 +153,10 @@ final class Present
                 'slug'       => $t['creator_slug'] ?? null,
             ],
             'released_at'  => $t['released_at'],
+            'description'  => $t['description'] ?? null,
+            'release_date' => $t['release_date'] ?? null,
             'created_at'   => $t['created_at'],
-        ];
+        ] + self::review($t);
     }
 
     public static function studio(array $s, array $rooms = [], ?array $rating = null): array
@@ -133,6 +175,7 @@ final class Present
             'backup_power' => (bool) $s['backup_power'],
             'cover_url'    => upload_url($s['cover_path']),
             'status'       => $s['status'],
+            'review_note'  => $s['review_note'] ?? null,
             'owner_id'     => (int) $s['owner_id'],
             'price_from'   => isset($s['price_from']) && $s['price_from'] !== null ? (int) $s['price_from'] : null,
             'rating'       => $rating ?? (isset($s['avg_rating']) ? ['average' => $s['avg_rating'] !== null ? round((float) $s['avg_rating'], 1) : null, 'count' => (int) ($s['review_count'] ?? 0)] : null),
@@ -171,6 +214,8 @@ final class Present
             'balance_due' => max(0, (int) $b['total'] - (int) $b['amount_paid']),
             'in_escrow'   => $escrow,
             'cancelled_by'=> $b['cancelled_by'],
+            'studio_note' => $b['studio_note'] ?? null,
+            'responded_at'=> $b['responded_at'] ?? null,
             'hold_expires_at' => $b['hold_expires_at'],
             'notes'       => $b['notes'],
             'room'        => ['id' => (int) $b['room_id'], 'name' => $b['room_name']],
@@ -210,19 +255,32 @@ final class Present
 
     public static function payment(array $p): array
     {
+        $open = in_array($p['status'], ['initiated', 'accepted'], true);
+        $hosted = ($p['gateway'] ?? '') === 'paystack';
         return [
             'id'             => $p['public_id'],
+            'reference'      => $p['public_id'],
+            'gateway'        => $p['gateway'] ?? null,
+            'purpose'        => $p['purpose'] ?? null,
             'status'         => $p['status'],
             'amount'         => (int) $p['amount'],
             'currency'       => $p['currency'],
             'phone'          => $p['phone'],
             'provider'       => $p['provider'],
+            'channel'        => $p['channel'] ?? null,
             'failure_reason' => $p['failure_reason'],
+            // Only while the payment is open: what the browser needs to show the Paystack checkout.
+            'checkout_url'   => $open ? ($p['checkout_url'] ?? null) : null,
+            'access_code'    => $open ? ($p['access_code'] ?? null) : null,
+            'completed_at'   => $p['completed_at'] ?? null,
+            'created_at'     => $p['created_at'] ?? null,
             // Tell the frontend what to show while waiting.
             'message'        => match ($p['status']) {
-                'initiated', 'accepted' => 'Check your phone and enter your mobile money PIN to approve the payment.',
-                'completed'             => 'Payment received.',
-                'failed'                => 'Payment failed: ' . ($p['failure_reason'] ?? 'not approved'),
+                'initiated', 'accepted' => $hosted
+                    ? 'Complete the payment on the secure Paystack checkout (card or mobile money).'
+                    : 'Check your phone and approve the payment.',
+                'completed'             => 'Payment received. Thank you!',
+                'failed'                => 'Payment not completed: ' . ($p['failure_reason'] ?? 'it was not approved') . '. You were not charged.',
             },
         ];
     }
@@ -237,6 +295,8 @@ final class Present
             'provider'       => $p['provider'],
             'status'         => $p['status'],
             'failure_reason' => $p['failure_reason'],
+            'sent_note'      => $p['sent_note'] ?? null,
+            'gateway'        => $p['gateway'] ?? null,
             'created_at'     => $p['created_at'],
             'updated_at'     => $p['updated_at'],
         ];

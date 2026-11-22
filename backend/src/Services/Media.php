@@ -19,7 +19,7 @@ final class Media
         return (bool) config('media.ffmpeg_enabled', false);
     }
 
-    public static function processTrack(int $trackId): void
+    public static function processTrack(int $trackId, string $publish = 'in_review'): void
     {
         $t = DB::one('SELECT * FROM tracks WHERE id = ?', [$trackId]);
         if (!$t) {
@@ -36,7 +36,7 @@ final class Media
         self::ffmpeg(['-ss', (string) $start, '-t', '30', '-i', $src, '-vn', '-ac', '2', '-b:a', '64k',
             '-af', 'afade=t=in:d=1,afade=t=out:st=27:d=3', Storage::privatePath($preview)]);
 
-        $status = $t['status'] === 'processing' ? self::afterProcessing() : $t['status'];
+        $status = $t['status'] === 'processing' ? self::afterProcessing($publish) : $t['status'];
         DB::update('tracks', [
             'duration_sec' => $duration,
             'stream_path'  => $stream,
@@ -46,7 +46,7 @@ final class Media
         ], 'id = ?', [$trackId]);
     }
 
-    public static function processBeat(int $beatId): void
+    public static function processBeat(int $beatId, string $publish = 'in_review'): void
     {
         $b = DB::one('SELECT * FROM beats WHERE id = ?', [$beatId]);
         if (!$b) {
@@ -73,7 +73,7 @@ final class Media
             $updates['preview_path'] = $preview;
         }
         if ($b['status'] === 'processing') {
-            $updates['status'] = self::afterProcessing();
+            $updates['status'] = self::afterProcessing($publish);
         }
         if ($updates) {
             DB::update('beats', $updates, 'id = ?', [$beatId]);
@@ -81,9 +81,13 @@ final class Media
     }
 
     /** Status an upload moves to once its files are ready. */
-    public static function afterProcessing(): string
+    /**
+     * Status once the audio is ready: whatever the uploader was allowed to choose
+     * (creators always 'in_review'; admins may publish straight away). See Moderation.
+     */
+    public static function afterProcessing(string $publish = 'in_review'): string
     {
-        return config('moderation.auto_approve') ? 'live' : 'in_review';
+        return $publish === 'live' ? 'live' : 'in_review';
     }
 
     public static function duration(string $file): ?int

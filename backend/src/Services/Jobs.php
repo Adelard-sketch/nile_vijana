@@ -55,8 +55,8 @@ final class Jobs
     private static function handle(string $type, array $p): void
     {
         match ($type) {
-            'process_track' => Media::processTrack((int) $p['track_id']),
-            'process_beat'  => Media::processBeat((int) $p['beat_id']),
+            'process_track' => Media::processTrack((int) $p['track_id'], (string) ($p['publish'] ?? 'in_review')),
+            'process_beat'  => Media::processBeat((int) $p['beat_id'], (string) ($p['publish'] ?? 'in_review')),
             default         => throw new \RuntimeException("Unknown job type $type"),
         };
     }

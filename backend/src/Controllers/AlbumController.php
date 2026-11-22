@@ -39,11 +39,11 @@ final class AlbumController extends Controller
     private function present(int $id, bool $allTracks): array
     {
         $a = DB::one(
-            'SELECT a.*, cp.stage_name, cp.slug FROM albums a LEFT JOIN creator_profiles cp ON cp.user_id = a.creator_id WHERE a.id = ?',
+            'SELECT a.*, cp.stage_name, cp.slug FROM {albums} a LEFT JOIN {creator_profiles} cp ON cp.user_id = a.creator_id WHERE a.id = ?',
             [$id]
         ) ?? throw HttpException::notFound('Album');
         $tracks = DB::all(
-            "SELECT t.*, ? AS creator_name, ? AS creator_slug FROM tracks t
+            "SELECT t.*, ? AS creator_name, ? AS creator_slug FROM {tracks} t
               WHERE t.album_id = ? " . ($allTracks ? "AND t.status <> 'removed'" : "AND t.status = 'live'") . ' ORDER BY t.id',
             [$a['stage_name'], $a['slug'], $id]
         );

@@ -16,7 +16,8 @@ use App\Support\Present;
 /** Studio listings, rooms, opening hours, blocked days and availability. */
 final class StudioController extends Controller
 {
-    private const DEFAULT_HOURS = [
+    /** Mon-Sat 09:00-21:00, used when a room is created without opening hours. */
+    public const DEFAULT_HOURS = [
         1 => ['09:00', '21:00'], 2 => ['09:00', '21:00'], 3 => ['09:00', '21:00'],
         4 => ['09:00', '21:00'], 5 => ['09:00', '21:00'], 6 => ['09:00', '21:00'],
     ];
@@ -54,25 +55,38 @@ final class StudioController extends Controller
     public function mine(Request $req): array
     {
         $rows = DB::all('SELECT * FROM studios WHERE owner_id = ? ORDER BY id', [$req->userId()]);
-        return ['data' => array_map(fn ($s) => Present::studio($s, $this->rooms((int) $s['id'], true)), $rows)];
+        return ['data' => array_map(function ($s) {
+            $out = Present::studio($s, $this->rooms((int) $s['id'], true));
+            $blocked = $this->blockedDates(array_column($out['rooms'], 'id'));
+            foreach ($out['rooms'] as &$room) {
+                $room['blocked_dates'] = $blocked[$room['id']] ?? [];
+            }
+            return $out;
+        }, $rows)];
     }
 
     /** POST /api/studios — list a studio (an admin verifies it before it is public). */
     public function store(Request $req): Response
     {
-        $d = Validator::validate($req->all(), $this->studioRules(true));
+        $d = Validator::validate($req->all(), $this->studioRules(true), self::LABELS);
         $uid = $req->userId();
-        $id = DB::tx(function () use ($d, $uid) {
+        $isAdmin = Auth::isAdmin($req->user);
+        $id = DB::tx(function () use ($d, $uid, $isAdmin) {
             $id = DB::insert('studios', array_filter($this->studioRow($d), static fn ($v) => $v !== null) + [
                 'owner_id' => $uid,
                 'slug'     => $this->uniqueSlug($d['name']),
-                'status'   => config('moderation.auto_approve') ? 'verified' : 'pending',
-            ]);
-            Auth::addRole($uid, 'studio_owner');
+                // Studios are public only after an admin verifies them (admins listing a studio verify it themselves).
+                'status'   => $isAdmin ? 'verified' : 'pending',
+            ] + ($isAdmin ? ['reviewed_by' => $uid, 'reviewed_at' => now()] : []));
+            if (!$isAdmin) {
+                Auth::addRole($uid, 'studio_owner');
+            }
             return $id;
         });
         return Response::created($this->present($id, true) + [
-            'next_step' => 'Add rooms with POST /api/studios/' . $id . '/rooms. An admin will verify your studio.',
+            'next_step' => $isAdmin
+                ? 'Studio created and verified. Add rooms with POST /api/studios/' . $id . '/rooms.'
+                : 'Add rooms with POST /api/studios/' . $id . '/rooms. An admin will verify your studio.',
         ]);
     }
 
@@ -98,8 +112,12 @@ final class StudioController extends Controller
     {
         $s = $this->studio($req->id());
         $this->ownerOrAdmin($req, (int) $s['owner_id'], 'Studio');
-        $d = Validator::validate($req->all(), $this->studioRules(false));
+        $d = Validator::validate($req->all(), $this->studioRules(false), self::LABELS);
         $row = array_filter($this->studioRow($d), static fn ($v) => $v !== null);
+        if ($row && $s['status'] === 'rejected' && !Auth::isAdmin($req->user)) {
+            // The owner fixed what the admin asked for: back to the review queue.
+            $row['status'] = 'pending';
+        }
         if ($row) {
             DB::update('studios', $row, 'id = ?', [$s['id']]);
         }
@@ -111,22 +129,25 @@ final class StudioController extends Controller
     {
         $s = $this->studio($req->id());
         $this->ownerOrAdmin($req, (int) $s['owner_id'], 'Studio');
-        $file = $req->file('cover') ?? throw HttpException::invalid('Choose an image', ['cover' => 'Required']);
+        $file = $req->file('cover') ?? throw HttpException::invalid('Choose a cover photo.', ['cover' => 'Cover photo is required.']);
         $path = Storage::storeImage($file, 'studios', 'cover');
         DB::update('studios', ['cover_path' => $path], 'id = ?', [$s['id']]);
+        if ($s['cover_path']) {
+            @unlink(BASE_PATH . '/public/uploads/' . $s['cover_path']);
+        }
         return ['cover_url' => upload_url($path)];
     }
 
     /**
      * POST /api/studios/{id}/rooms
-     * {"name":"Vocal booth","hourly_rate":15000,"min_hours":2,"engineer_included":true,
+     * {"name":"Vocal booth","hourly_rate":150,"min_hours":2,"engineer_included":true,
      *  "hours":[{"weekday":1,"open":"09:00","close":"21:00"}, ...]}   (hours optional: Mon-Sat 09-21)
      */
     public function addRoom(Request $req): Response
     {
         $s = $this->studio($req->id());
         $this->ownerOrAdmin($req, (int) $s['owner_id'], 'Studio');
-        $d = Validator::validate($req->all(), $this->roomRules(true) + ['hours' => 'nullable|array|max:7']);
+        $d = Validator::validate($req->all(), $this->roomRules(true) + ['hours' => 'nullable|array|max:7'], self::LABELS);
         $hours = isset($d['hours']) ? $this->validHours($d['hours']) : self::DEFAULT_HOURS;
         $photo = $req->file('photo') ? Storage::storeImage($req->file('photo'), 'studios', 'photo') : null;
 
@@ -143,12 +164,25 @@ final class StudioController extends Controller
     public function updateRoom(Request $req): array
     {
         $room = $this->roomForOwner($req);
-        $d = Validator::validate($req->all(), $this->roomRules(false) + ['status' => 'nullable|in:active,inactive']);
+        $d = Validator::validate($req->all(), $this->roomRules(false) + ['status' => 'nullable|in:active,inactive'], self::LABELS);
         $row = array_filter($this->roomRow($d) + ['status' => $d['status'] ?? null], static fn ($v) => $v !== null);
         if ($row) {
             DB::update('studio_rooms', $row, 'id = ?', [$room['id']]);
         }
         return $this->roomWithHours((int) $room['id']);
+    }
+
+    /** POST /api/rooms/{id}/photo (multipart, field "photo") */
+    public function roomPhoto(Request $req): array
+    {
+        $room = $this->roomForOwner($req);
+        $file = $req->file('photo') ?? throw HttpException::invalid('Choose a room photo.', ['photo' => 'Room photo is required.']);
+        $path = Storage::storeImage($file, 'studios', 'photo');
+        DB::update('studio_rooms', ['photo_path' => $path], 'id = ?', [$room['id']]);
+        if ($room['photo_path']) {
+            @unlink(BASE_PATH . '/public/uploads/' . $room['photo_path']);
+        }
+        return ['photo_url' => upload_url($path)];
     }
 
     /** PUT /api/rooms/{id}/hours {"hours":[{"weekday":1,"open":"09:00","close":"21:00"}]} replaces the week. */
@@ -170,7 +204,7 @@ final class StudioController extends Controller
             throw HttpException::invalid('Choose today or a future date', ['date' => 'In the past']);
         }
         $booked = (int) DB::value(
-            "SELECT COUNT(*) FROM bookings WHERE room_id = ? AND DATE(start_at) = ? AND status IN ('held','confirmed')",
+            "SELECT COUNT(*) FROM bookings WHERE room_id = ? AND DATE(start_at) = ? AND status IN ('held','pending','confirmed')",
             [$room['id'], $d['date']]
         );
         if ($booked) {
@@ -204,6 +238,11 @@ final class StudioController extends Controller
     }
 
     // ------------------------------------------------------------------
+
+    private const LABELS = [
+        'name' => 'Name', 'city' => 'City or town', 'phone' => 'Phone for bookings', 'hourly_rate' => 'Hourly price (GH₵)',
+        'min_hours' => 'Minimum booking (hours)', 'equipment' => 'Facilities and equipment',
+    ];
 
     private function studioRules(bool $creating): array
     {
@@ -249,7 +288,7 @@ final class StudioController extends Controller
         return [
             'name'              => "$req|string|min:2|max:120",
             'description'       => 'nullable|string|max:2000',
-            'hourly_rate'       => "$req|int|min:500|max:2000000",
+            'hourly_rate'       => "$req|int|min:" . (int) config('money.min_room_rate', 20) . '|max:' . (int) config('money.max_room_rate', 10000),
             'min_hours'         => 'nullable|int|min:1|max:12',
             'engineer_included' => 'nullable|bool',
         ];
@@ -276,7 +315,7 @@ final class StudioController extends Controller
             $close = substr((string) ($h['close'] ?? ''), 0, 5);
             $time = '/^([01]\d|2[0-3]):[0-5]\d$/';
             if ($day < 1 || $day > 7 || !preg_match($time, $open) || !preg_match($time, $close) || $open >= $close) {
-                throw HttpException::invalid('Invalid opening hours', ["hours.$i" => 'Use weekday 1-7 (Mon-Sun) with open < close, e.g. 09:00-21:00']);
+                throw HttpException::invalid('Check the opening hours.', ["hours.$i" => 'Each day needs an opening time before its closing time, for example 09:00 to 21:00.']);
             }
             $out[$day] = [$open, $close];
         }
@@ -316,6 +355,23 @@ final class StudioController extends Controller
         return $rows;
     }
 
+    /** Upcoming blocked dates per room (owner views only). */
+    private function blockedDates(array $roomIds): array
+    {
+        if (!$roomIds) {
+            return [];
+        }
+        $in = implode(',', array_fill(0, count($roomIds), '?'));
+        $out = [];
+        foreach (DB::all(
+            "SELECT id, room_id, blocked_date AS date, reason FROM room_blocked_dates WHERE room_id IN ($in) AND blocked_date >= CURDATE() ORDER BY blocked_date",
+            $roomIds
+        ) as $row) {
+            $out[(int) $row['room_id']][] = ['id' => (int) $row['id'], 'date' => $row['date'], 'reason' => $row['reason']];
+        }
+        return $out;
+    }
+
     private function hoursFor(int $roomId): array
     {
         $days = [1 => 'Mon', 2 => 'Tue', 3 => 'Wed', 4 => 'Thu', 5 => 'Fri', 6 => 'Sat', 7 => 'Sun'];
@@ -349,7 +405,7 @@ final class StudioController extends Controller
         ]);
     }
 
-    private function uniqueSlug(string $name): string
+    public static function uniqueSlug(string $name): string
     {
         $base = slugify($name);
         $slug = $base;

@@ -25,7 +25,7 @@ final class Auth
 
     public static function revoke(string $token): void
     {
-        DB::run('DELETE FROM auth_tokens WHERE token_hash = ?', [hash('sha256', $token)]);
+        DB::run('DELETE FROM {auth_tokens} WHERE token_hash = ?', [hash('sha256', $token)]);
     }
 
     public static function resolve(Request $req): ?array
@@ -35,10 +35,10 @@ final class Auth
             return null;
         }
         $user = DB::one(
-            "SELECT u.id, u.name, u.phone, u.email, u.country, u.language, u.status, u.created_at,
+            "SELECT u.id, u.name, u.username, u.phone, u.email, u.email_verified_at, u.country, u.language, u.status, u.created_at,
                     t.id AS token_id, t.last_used_at
-               FROM auth_tokens t
-               JOIN users u ON u.id = t.user_id
+               FROM {auth_tokens} t
+               JOIN {users} u ON u.id = t.user_id
               WHERE t.token_hash = ? AND t.expires_at > NOW() AND u.status = 'active'",
             [hash('sha256', $token)]
         );
@@ -47,7 +47,7 @@ final class Auth
         }
         // Record activity at most once every 10 minutes to avoid a write on every request.
         if ($user['last_used_at'] === null || strtotime($user['last_used_at']) < time() - 600) {
-            DB::run('UPDATE auth_tokens SET last_used_at = NOW() WHERE id = ?', [$user['token_id']]);
+            DB::run('UPDATE {auth_tokens} SET last_used_at = NOW() WHERE id = ?', [$user['token_id']]);
         }
         unset($user['token_id'], $user['last_used_at']);
         $user['roles'] = self::roles((int) $user['id']);
@@ -56,12 +56,12 @@ final class Auth
 
     public static function roles(int $userId): array
     {
-        return array_column(DB::all('SELECT role FROM user_roles WHERE user_id = ? ORDER BY role', [$userId]), 'role');
+        return array_column(DB::all('SELECT role FROM {user_roles} WHERE user_id = ? ORDER BY role', [$userId]), 'role');
     }
 
     public static function addRole(int $userId, string $role): void
     {
-        DB::run('INSERT IGNORE INTO user_roles (user_id, role) VALUES (?, ?)', [$userId, $role]);
+        DB::run('INSERT IGNORE INTO {user_roles} (user_id, role) VALUES (?, ?)', [$userId, $role]);
     }
 
     /** True if the user has any of the roles. Admins pass every role check. */

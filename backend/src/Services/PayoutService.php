@@ -16,25 +16,65 @@ use App\Services\Payments\PaymentService;
  */
 final class PayoutService
 {
+    /**
+     * How approved withdrawals are sent:
+     *  'transfer' - automatically, through Paystack Transfers (or the configured gateway)
+     *  'manual'   - an admin sends the mobile money and records it with "Mark as sent"
+     */
+    public static function mode(): string
+    {
+        $gateway = (string) config('payments.gateway', 'paystack');
+        if ($gateway === 'paystack' && !filter_var(config('payments.paystack.transfers', false), FILTER_VALIDATE_BOOLEAN)) {
+            return 'manual';
+        }
+        return 'transfer';
+    }
+
+    /** An admin sent the money outside the app (e.g. from the company MoMo wallet). */
+    public static function markSent(array $admin, int $payoutId, string $note): array
+    {
+        DB::tx(static function () use ($admin, $payoutId, $note) {
+            $p = DB::one('SELECT * FROM payouts WHERE id = ? FOR UPDATE', [$payoutId]);
+            if (!$p) {
+                throw HttpException::notFound('Payout');
+            }
+            if (!in_array($p['status'], ['requested', 'processing'], true)) {
+                throw HttpException::conflict("This payout is already {$p['status']}");
+            }
+            DB::update('payouts', [
+                'status'      => 'completed',
+                'approved_by' => $admin['id'],
+                'gateway'     => 'manual',
+                'sent_note'   => mb_substr($note, 0, 255),
+            ], 'id = ?', [$payoutId]);
+        });
+        $p = self::find($payoutId);
+        $user = DB::one('SELECT phone FROM users WHERE id = ?', [$p['user_id']]);
+        if ($user && $user['phone']) {
+            Sms::send($user['phone'], 'Nile Vijana: ' . money_format_ghs((int) $p['amount']) . ' has been sent to ' . format_phone($p['phone']) . '.');
+        }
+        return $p;
+    }
+
     public static function request(array $user, int $amount, ?string $phone, ?string $provider): array
     {
         $uid = (int) $user['id'];
         $min = (int) config('money.min_payout', 1000);
         if ($amount < $min) {
-            throw HttpException::invalid("The minimum withdrawal is $min RWF", ['amount' => 'Too small']);
+            throw HttpException::invalid('The minimum withdrawal is ' . money_format_ghs($min) . '.', ['amount' => 'The minimum withdrawal is ' . money_format_ghs($min) . '.']);
         }
 
         $profile = DB::one('SELECT payout_phone, payout_provider FROM creator_profiles WHERE user_id = ?', [$uid]);
         $phone = $phone ?: ($profile['payout_phone'] ?? null) ?: ($user['phone'] ?? null);
         if (!$phone) {
-            throw HttpException::invalid('Add a mobile money number', ['phone' => 'Required']);
+            throw HttpException::invalid('Add the mobile money number to send the money to.', ['phone' => 'Mobile money number is required.']);
         }
         if (!$provider && $profile && $profile['payout_phone'] === $phone) {
             $provider = $profile['payout_provider'];
         }
         $provider = $provider ?: detect_provider($phone);
         if (!$provider) {
-            throw HttpException::invalid('Tell us the mobile money network', ['provider' => 'e.g. MTN_MOMO_RWA or AIRTEL_RWA']);
+            throw HttpException::invalid('Choose the mobile money network.', ['provider' => 'Choose MTN Mobile Money, Telecel Cash or AirtelTigo Money.']);
         }
 
         return DB::tx(static function () use ($uid, $amount, $phone, $provider) {
@@ -42,23 +82,26 @@ final class PayoutService
             DB::one('SELECT id FROM users WHERE id = ? FOR UPDATE', [$uid]);
             $balance = Ledger::balance($uid);
             if ($balance < $amount) {
-                throw HttpException::invalid('Your balance is ' . number_format($balance) . ' RWF', ['amount' => 'More than your balance']);
+                throw HttpException::invalid('Your balance is ' . money_format_ghs($balance) . '.', ['amount' => 'This is more than your balance of ' . money_format_ghs($balance) . '.']);
             }
             $id = DB::insert('payouts', [
                 'public_id' => uuid4(),
                 'user_id'   => $uid,
                 'amount'    => $amount,
-                'currency'  => (string) config('money.currency', 'RWF'),
+                'currency'  => (string) config('money.currency', 'GHS'),
                 'phone'     => $phone,
                 'provider'  => $provider,
             ]);
-            Ledger::post('user', $uid, -$amount, 'payout', 'payout', $id, "Withdrawal to +$phone");
+            Ledger::post('user', $uid, -$amount, 'payout', 'payout', $id, 'Withdrawal to ' . format_phone($phone));
             return self::find($id);
         });
     }
 
     public static function approve(array $admin, int $payoutId): array
     {
+        if (self::mode() === 'manual') {
+            throw HttpException::conflict('Automatic transfers are turned off. Send the money from your mobile money or Paystack account, then use "Mark as sent".');
+        }
         $p = DB::tx(static function () use ($admin, $payoutId) {
             $p = DB::one('SELECT * FROM payouts WHERE id = ? FOR UPDATE', [$payoutId]);
             if (!$p) {
@@ -76,7 +119,8 @@ final class PayoutService
         });
 
         try {
-            $result = PaymentService::gateway($p['gateway'])->initiatePayout($p['public_id'], (int) $p['amount'], $p['currency'], $p['phone'], $p['provider']);
+            $owner = DB::one('SELECT name FROM users WHERE id = ?', [$p['user_id']]);
+            $result = PaymentService::gateway($p['gateway'])->initiatePayout($p['public_id'], (int) $p['amount'], $p['currency'], $p['phone'], (string) $p['provider'], ['name' => $owner['name'] ?? null]);
         } catch (\Throwable $e) {
             app_log('payments', "payout initiate failed {$p['public_id']}: " . $e->getMessage());
             $result = ['state' => 'unknown'];
@@ -119,7 +163,7 @@ final class PayoutService
             if ($changed) {
                 $user = DB::one('SELECT phone FROM users WHERE id = ?', [$p['user_id']]);
                 if ($user && $user['phone']) {
-                    Sms::send($user['phone'], 'Nile Vijana: ' . number_format((int) $p['amount']) . ' RWF has been sent to +' . $p['phone'] . '.');
+                    Sms::send($user['phone'], 'Nile Vijana: ' . money_format_ghs((int) $p['amount']) . ' has been sent to ' . format_phone($p['phone']) . '.');
                 }
             }
         } elseif ($s['state'] === 'failed') {

@@ -28,17 +28,28 @@ nile-vijana-api/
 │   ├── routes.php       ← ALL endpoints in one list
 │   ├── Core/            ← Router, Request, Response, DB, Auth, Validator
 │   ├── Controllers/     ← one class per area (Beats, Tracks, Studios, Orders…)
+│   ├── Models/          ← domain persistence (users, creators, tracks, beats)
 │   ├── Services/        ← business logic: payments, ledger, bookings, payouts, PDF, storage
 │   └── Support/Present.php  ← shapes database rows into JSON
 ├── database/
-│   ├── schema.sql       ← all tables
-│   └── seed.sql         ← demo users and a demo studio
+│   ├── schema.sql       ← all tables (fresh installs)
+│   ├── seed.sql         ← demo users and a demo studio
+│   └── migrations/      ← upgrades for an existing database (run bin/migrate.php)
 ├── config/config.example.php   ← copy to config.php
 ├── storage/private/     ← audio files (never public)
 ├── storage/logs/        ← payments.log, sms.log, errors.log
 ├── bin/worker.php       ← background worker (payments, audio processing, expiry)
+├── bin/migrate.php      ← applies database/migrations to an existing database
 └── docs/postman_collection.json
 ```
+
+The browser UI is static HTML, CSS, and JavaScript. PHP controllers handle API
+requests and validation; domain models provide persistence methods; MySQL tables
+are defined in `database/schema.sql`. Cart state remains in browser storage.
+Homepage Nile Vijana tracks are loaded from `/api/tracks`; featured Spotify
+embeds are managed in `featured_spotify_embeds` and loaded from
+`/api/home/featured-spotify`. Track search can also query Spotify's catalog
+through `/api/spotify/search`; Spotify credentials stay on the backend.
 
 ## 2. Requirements
 
@@ -53,12 +64,23 @@ nile-vijana-api/
 
 1. Copy the `nile-vijana-api` folder into `C:\xampp\htdocs\`.
 2. Start **Apache** and **MySQL** in the XAMPP Control Panel.
-3. Open http://localhost/phpmyadmin, then go to the **Import** tab. Import `database/schema.sql` first, then `database/seed.sql`.
+3. **New database:** open http://localhost/phpmyadmin, go to the **Import** tab and import `database/schema.sql`, then `database/seed.sql`.
+   **Existing database (upgrade, keeps all data):** back it up first (phpMyAdmin → Export), then run
+   ```
+   cd C:\xampp\htdocs\nilevijanacreatives\backend
+   C:\xampp\php\php.exe bin\migrate.php
+   ```
+   It adds the missing tables and columns (new account types, review notes, booking requests...) and records
+   what it did in `schema_migrations`, so running it again is safe. `php bin/migrate.php --status` lists them.
+   Do not re-import `schema.sql` over an existing database to upgrade it: `CREATE TABLE IF NOT EXISTS` skips
+   tables that already exist, so new columns would be missing.
 4. Copy `config\config.example.php` to `config\config.php` and set:
    - `app.base_url` → `http://localhost/nile-vijana-api`
    - `app.key` → a long random string. Generate one with `C:\xampp\php\php.exe -r "echo bin2hex(random_bytes(32));"`
    - `db.user` / `db.pass` → `root` with an empty password on a fresh XAMPP install.
    - In this workspace's `backend/public` layout, use `http://localhost/nileVijana/backend/public` for `app.base_url` so generated API and upload links point to the served backend.
+   - On the hosted layout, set `APP_URL` to the `backend/public` URL and `FRONTEND_URL` to the sibling `frontend` URL. `.env.local` is only used for loopback XAMPP requests (or CLI commands explicitly run with `NV_USE_LOCAL_ENV=true`).
+   - To enable Spotify catalog search, create an app in the Spotify Developer Dashboard and add its `client_id` and `client_secret` under the `spotify` section in `backend/config/config.php`. Never put these credentials in frontend files.
 5. Open http://localhost/nile-vijana-api/ for the storefront. Open http://localhost/nile-vijana-api/api/health to confirm the API is running.
 6. To upload songs larger than the PHP limit, edit `C:\xampp\php\php.ini` and set `upload_max_filesize = 64M` and `post_max_size = 64M`, then restart Apache.
 7. Start the worker in a terminal and leave it running:
@@ -78,6 +100,9 @@ nile-vijana-api/
 | Artist (Aline U) | artist@nilevijana.test | 0780000003 | Demo@123 |
 | Studio owner (Inzozi Sound Lab) | studio@nilevijana.test | 0780000004 | Demo@123 |
 | Fan | fan@nilevijana.test | 0780000005 | Demo@123 |
+| Choir (Chorale Inyange) | choir@nilevijana.test | 0780000006 | Demo@123 |
+| Artist manager (Eric Manzi, manages Aline U and the choir) | manager@nilevijana.test | 0780000007 | Demo@123 |
+| Vocal coach (Diane Uwase) | coach@nilevijana.test | 0780000008 | Demo@123 |
 
 All names are fictional. The studio has two rooms open Monday to Saturday 09:00–21:00 and Sunday 12:00–18:00.
 
@@ -89,7 +114,7 @@ All names are fictional. The studio has two rooms open Monday to Saturday 09:00�
   `{"error": "Some fields need fixing", "errors": {"phone": "This field is required"}}`
   The HTTP status tells you the kind of error: 401 sign in, 403 not allowed, 404 not found, 409 conflict, 422 invalid input.
 - Lists return `{"data": [...], "meta": {"page", "per_page", "total", "pages"}}`. Use `?page=2&per_page=20` to page through them.
-- Money is in whole Rwandan francs (integers).
+- Money is in whole Ghanaian cedis (GHS, integer amounts).
 
 **Quickest way to try it:** import `docs/postman_collection.json` into Postman. Set `base_url` and run **Login as …**. The token is saved for you.
 
@@ -111,7 +136,7 @@ The server only trusts a status it fetched from the provider itself. A callback 
 3. In the pawaPay dashboard, set both the deposit and payout callback URLs to `https://<your-domain>/api/webhooks/pawapay`.
 4. pawaPay can't call `localhost`. Polling and the worker still pick up every result, so you only need the callback once the API is online.
 
-Rwanda provider codes are `MTN_MOMO_RWA` (numbers starting 078 or 079) and `AIRTEL_RWA` (072 or 073). The API detects the network from the number when the frontend doesn't send one.
+Rwanda provider codes are `MTN_MOMO_RWA` (numbers starting 078 or 079) and `AIRTEL_RWA` (072 or 073). The API detects the network from the number when the frontend doesn't send one. This repository's current phone and provider configuration is Rwanda-specific; configure Ghana-supported providers before enabling live GHS payments.
 
 ## 7. Money rules
 
@@ -122,7 +147,7 @@ Rwanda provider codes are `MTN_MOMO_RWA` (numbers starting 078 or 079) and `AIRT
 | 30% deposit to confirm a booking | `money.deposit_rate` |
 | Free cancellation up to 24 hours before a session | `money.free_cancel_hours` |
 | Booking slot held for 10 minutes while the artist pays | `money.booking_hold_minutes` |
-| Minimum withdrawal of 1,000 RWF | `money.min_payout` |
+| Minimum withdrawal of 1,000 GHS | `money.min_payout` |
 
 - **The ledger is append-only.** Every money movement is a row in `ledger_entries`, and a wallet balance is the sum of that user's rows. Rows are never edited.
 - **Escrow:** a booking deposit sits in escrow until the session. When the studio marks it `complete`, the money goes to the studio minus commission. If the artist cancels early, they get a full refund to their wallet. If they cancel late, the studio keeps the deposit.
@@ -143,10 +168,40 @@ To run it automatically:
 - **Windows:** create a Task Scheduler task that runs `C:\xampp\php\php.exe C:\xampp\htdocs\nile-vijana-api\bin\worker.php` every minute.
 - **Linux:** add the cron line `* * * * * cd /var/www/nile-vijana-api && php bin/worker.php`
 
+## 8a. Approval workflow (songs, beats, studios)
+
+Enforced by the API (`Services/Moderation.php`), not only hidden in the UI:
+
+```
+creator uploads ─▶ in_review (not public) ─▶ admin approves ─▶ live (public, streamable, for sale)
+                                          └▶ admin rejects with a reason ─▶ rejected
+rejected ─▶ creator fixes it and resubmits (POST /api/tracks|beats/{id}/resubmit) ─▶ in_review again
+admin uploads for someone ─▶ admin chooses "publish now" (live) or "review queue" (in_review)
+```
+
+Public lists, detail pages, streams, previews and checkout only accept `live` items. The owner and admins can
+listen to unpublished audio through a short-lived signed link (`listen_url`, served by `GET /api/media/{token}`).
+A rejection needs a reason (at least 5 characters); it is stored in `review_note`, shown to the creator and sent by SMS.
+Studios work the same way: a new listing is `pending` until an admin verifies it; a rejected studio goes back to
+`pending` when the owner edits it. The old `moderation.auto_approve` setting no longer publishes creator uploads.
+
+## 8b. Studio booking requests
+
+```
+held (slot reserved while the deposit is paid) ─▶ pending (deposit in escrow, studio must answer)
+pending ─▶ studio accepts ─▶ confirmed ─▶ completed (money released to the studio) / no_show
+pending ─▶ studio declines with a reason ─▶ rejected (deposit refunded to the artist's wallet)
+pending and no answer within money.booking_response_hours (48 h), or the start time passes ─▶ rejected by the worker, refunded
+```
+
+A pending request blocks the time slot, so two artists cannot request the same hours.
+
 ## 9. API reference
 
 🔓 = anyone · 🔑 = signed in · A = artist · P = producer · S = studio owner (checked against ownership) · ⚙️ = admin
 
+| Method | Route | Who | What it does |
+| --- | --- | --- | --- |
 ### Sign-in and account
 | Method | Route | Who | What it does |
 | --- | --- | --- | --- |
@@ -158,7 +213,8 @@ To run it automatically:
 | GET / PATCH | /api/me | 🔑 | My account, roles, profile, studios, balance / update name, email, language, password |
 | GET | /api/me/wallet | 🔑 | Balance and money history |
 | GET | /api/me/library | 🔑 | Purchases, liked songs, followed creators |
-| PATCH | /api/creators/me | 🔑 | Create or edit my artist/producer profile (`stage_name, type, bio, city, payout_phone`) |
+| PATCH | /api/creators/me | 🔑 | Create or edit my profile (`stage_name, type` = artist, producer, both, choir, manager or vocal_coach, `bio, city, genres, contact_email, contact_phone, website, members_count, experience_years, specialization, company, payout_phone, payout_provider`) |
+| GET / PATCH / DELETE | /api/creators/me/manager | A | Read, save or remove one private manager contact (`name`, and `email` or `phone`; optional `company`) |
 | POST | /api/creators/me/avatar | A/P | Upload a profile picture (field `avatar`) |
 | GET | /api/creators/{slug} | 🔓 | Public page with songs, beats and followers |
 | POST / DELETE | /api/creators/{id}/follow | 🔑 | Follow / unfollow |
@@ -167,9 +223,10 @@ To run it automatically:
 | Method | Route | Who | What it does |
 | --- | --- | --- | --- |
 | GET | /api/tracks?q=&genre=&mood=&language=&creator=&sort= | 🔓 | Browse live songs (`sort`: newest, popular, title) |
-| GET | /api/tracks/mine | A | My songs in every status |
-| POST | /api/tracks | A | Multipart: `title, genre, mood, language, price, album_id` + files `audio`, `cover` |
-| GET / PATCH / DELETE | /api/tracks/{id} | 🔓 / A | View / edit / remove |
+| GET | /api/tracks/mine | A | My songs in every status, with `review_note` when rejected |
+| POST | /api/tracks | A | Multipart: `title, genre, mood, language, price, album_id, description, release_date` + files `audio`, `cover`. Goes to review. Admins also send `creator_id` (artist or choir) and `publish` = `live` or `in_review` |
+| GET / PATCH / DELETE | /api/tracks/{id} | 🔓 / A | View (owner and admin also get `listen_url`) / edit / remove |
+| POST | /api/tracks/{id}/resubmit | A | Multipart: changed fields and optional new `audio` / `cover`; a rejected or pending song goes back to review |
 | POST | /api/tracks/{id}/cover | A | New cover image |
 | GET | /api/tracks/{id}/stream | 🔓 | Audio stream (supports seeking) |
 | GET | /api/tracks/{id}/preview | 🔓 | 30-second clip (when FFmpeg is on) |
@@ -200,7 +257,8 @@ To run it automatically:
 | --- | --- | --- | --- |
 | GET | /api/beats?q=&genre=&mood=&key=&bpm_min=&bpm_max=&price_max=&producer=&sort= | 🔓 | Browse (`sort`: newest, popular, price_low, price_high) |
 | GET | /api/beats/mine | P | My beats with sales |
-| POST | /api/beats | P | Multipart: `title, bpm, key, genre, mood, tags, tiers` + files `mp3`, `wav`, `stems` (zip), `preview`, `cover` |
+| POST | /api/beats | P | Multipart: `title, bpm, key, genre, mood, tags, description, release_date, tiers` + files `mp3`, `wav`, `stems` (zip), `preview`, `cover`. Goes to review; admins also send `producer_id` and `publish` |
+| POST | /api/beats/{id}/resubmit | P | Multipart: changed fields, `tiers`, optional new files; back to review |
 | GET / PATCH / DELETE | /api/beats/{id} | 🔓 / P | View / edit details and licence tiers / take off sale |
 | GET | /api/beats/{id}/preview | 🔓 | Tagged preview audio |
 | POST | /api/beats/{id}/plays | 🔓 | Count a preview listen |
@@ -223,7 +281,7 @@ To run it automatically:
 | POST | /api/bookings | 🔑 | `{room_id, start_at:"2026-11-05 14:00", hours, phone, provider?, notes?}` holds the slot and asks for the deposit |
 | GET | /api/bookings?as=artist\|studio&status=&upcoming=1 | 🔑 | My sessions / bookings at my studios |
 | GET | /api/bookings/{id} | 🔑 | Details (poll this while paying) |
-| PATCH | /api/bookings/{id} | 🔑 | `{action}`: `cancel` (artist or studio), `complete` or `no_show` (studio, after the start time), `studio_no_show` (admin) |
+| PATCH | /api/bookings/{id} | 🔑 | `{action, note?}`: `accept` or `reject` (studio, for `pending` requests; `reject` needs `note`), `cancel` (artist or studio), `complete` or `no_show` (studio, after the start time), `studio_no_show` (artist or admin) |
 | POST | /api/bookings/{id}/pay-balance | 🔑 | Pay the rest of the session price in the app |
 
 ### Checkout and downloads
@@ -239,13 +297,20 @@ To run it automatically:
 ### Dashboard, payouts, reviews and reports
 | Method | Route | Who | What it does |
 | --- | --- | --- | --- |
-| GET | /api/dashboard/stats?range=7\|30\|90\|365 | 🔑 | Earnings and wallet, plus sections by role: plays, listeners, completion, cities and daily plays (artists); licences by tier (producers); bookings, escrow and upcoming sessions (studios) |
+| GET | /api/dashboard/stats?range=7\|30\|90\|365 | 🔑 | Compact summary by role (kept for older pages) |
+| GET | /api/dashboard/wallet | 🔑 | Balance, withdrawals in progress, pending sales, lifetime and monthly earnings (12 months), transactions, payouts |
+| GET | /api/dashboard/music?range= | A / choir | Uploads by status, streams per day, listeners, followers, per-song plays/likes/sales/revenue, top songs, recent releases, top cities, monthly earnings |
+| GET | /api/dashboard/beats?range= | P | Beats by status, plays, licences sold (by tier), revenue per beat, popular beats, recent sales, monthly earnings |
+| GET | /api/dashboard/studio?range= | S | Requests to answer, schedule, sessions to close, revenue, money in escrow, bookings per day, monthly revenue |
+| GET | /api/dashboard/manager?range= | manager | The artists and choirs linked to the manager, with releases, streams and earnings |
 | POST / GET | /api/payouts | 🔑 | `{amount, phone?, provider?}` withdraw to mobile money / my withdrawals |
 | GET / POST | /api/reviews | 🔓 / 🔑 | Reviews for a studio, beat or song. Studios need a completed session; beats need a purchase. |
 | POST | /api/reports | 🔑 | `{target_type, target_id, reason: copyright\|abuse\|fraud\|other, details}` |
 
 ### Admin (⚙️)
-`GET /api/admin/overview` · `GET /api/admin/queue` · `GET / POST /api/admin/opportunities` · `PATCH /api/admin/opportunities/{id}` · `GET /api/admin/opportunities/{id}/applications?status=pending` · `PATCH /api/admin/opportunities/{id}/applications/{applicationId} {status: accepted|rejected, decision_note?}` · `POST /api/admin/{tracks|beats|studios}/{id}/review {decision: approve|reject, note}` · `POST /api/admin/creators/{id}/verify` · `GET /api/admin/payouts?status=` · `POST /api/admin/payouts/{id}/approve|reject` · `GET /api/admin/reports` · `POST /api/admin/reports/{id}/resolve {status, note, remove_content}` · `GET /api/admin/users?q=&role=` · `PATCH /api/admin/users/{id} {status, add_role, remove_role}`
+`GET /api/admin/overview` (accounts by type, content, pending approvals, revenue and commission per month, creator and studio earnings, pending bookings, recent registrations, activity) · `GET /api/admin/activity?limit=` · `GET /api/admin/bookings?status=` · `POST /api/admin/onboard` (one form for every account type, see below) · `PUT /api/admin/managers/{id}/artists {artist_ids:[...]}` · `GET /api/admin/creator-profiles?type=artist|musician|producer|choir|manager|vocal_coach|all&q=` · `GET /api/admin/tracks?status=&q=` · `GET /api/admin/beats?status=&q=` · `GET /api/admin/studios?status=&q=` · `GET /api/admin/queue` · `GET / POST /api/admin/opportunities` · `PATCH /api/admin/opportunities/{id}` · `GET /api/admin/opportunities/{id}/applications?status=pending` · `PATCH /api/admin/opportunities/{id}/applications/{applicationId} {status: accepted|rejected, decision_note?}` · `POST /api/admin/{tracks|beats|studios}/{id}/review {decision: approve|reject, note}` · `POST /api/admin/creators/{id}/verify` · `GET /api/admin/payouts?status=` · `POST /api/admin/payouts/{id}/approve|reject` · `GET /api/admin/reports` · `POST /api/admin/reports/{id}/resolve {status, note, remove_content}` · `GET /api/admin/users?q=&role=` · `PATCH /api/admin/users/{id} {status, add_role, remove_role}`
+
+`POST /api/admin/onboard` (multipart; optional file `picture`): `type` = artist, choir, producer, manager, vocal_coach or studio, `display_name`, `phone` and/or `email`, optional `password`, `contact_name`, `bio`, `city`, `website`. Per type: artist and producer need `genres`; choir needs `city` and `members_count`; vocal_coach needs `experience_years` and `specialization` (also listed on the mentors page); manager takes `company` and `managed_artists` (JSON list of artist/choir ids); studio needs `city`, `address`, `equipment` and `rooms` (JSON list of `{name, hourly_rate, min_hours, engineer_included}`), optional `amenities`, `backup_power`. The account gets the matching role and a verified profile (studios are created verified with Monday–Saturday 09:00–21:00 hours).
 
 New opportunities are drafts by default. Include `category` (`promotion` or `distribution`), `partner_name`, `title`, and `description` when creating one; `partner_url` must use HTTPS. Set `status` to `open` to publish it. Only artists can apply, and an artist can apply once per opportunity.
 

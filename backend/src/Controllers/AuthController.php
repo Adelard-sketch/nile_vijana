@@ -9,141 +9,238 @@ use App\Core\HttpException;
 use App\Core\Request;
 use App\Core\Response;
 use App\Core\Validator;
-use App\Services\Sms;
+use App\Services\Accounts;
+use App\Services\EmailTemplates;
+use App\Services\Mailer;
+use App\Services\SignInCodes;
 use App\Support\Present;
 
 /**
- * Two ways to sign in:
- *  1. Phone + one-time SMS code (most users)   POST /api/auth/otp, then POST /api/auth/verify
- *  2. Email or phone + password                POST /api/auth/register, POST /api/auth/login
- * Both return {"token": "...", "user": {...}}. Send the token as: Authorization: Bearer <token>
+ * Sign-up and sign-in.
+ *
+ *  Sign up   POST /api/auth/register        name, username, email, phone, password, role
+ *            -> welcome email + a 6-digit code to the email -> POST /api/auth/login/verify
+ *  Sign in   POST /api/auth/login           login (email OR username) + password
+ *            -> a 6-digit code to the email  -> POST /api/auth/login/verify {ticket, code}
+ *            POST /api/auth/login/resend {ticket} sends a new code (60 s apart, 5 at most)
+ *  Forgot    POST /api/auth/password/forgot {login} -> code by email
+ *            POST /api/auth/password/reset  {ticket, code, password}
+ *
+ * Phone numbers are part of the account (payments, alerts) but are not sign-in identifiers.
+ * Only /login/verify and /password/reset return {"token": "...", "user": {...}}.
  */
 final class AuthController extends Controller
 {
+    private const LABELS = [
+        'name' => 'Full name', 'username' => 'Username', 'email' => 'Email address',
+        'phone' => 'Phone number', 'password' => 'Password', 'role' => 'Account type',
+        'login' => 'Email or username', 'code' => 'Code', 'ticket' => 'Sign-in session',
+    ];
+
     public function register(Request $req): Response
     {
-        $d = Validator::validate($req->all(), [
-            'name'     => 'required|string|min:2|max:120',
-            'email'    => 'nullable|email|max:190',
-            'phone'    => 'nullable|phone',
-            'password' => 'required|string|min:8|max:100',
-        ]);
-        if (empty($d['email']) && empty($d['phone'])) {
-            throw HttpException::invalid('Give an email or a phone number', ['email' => 'Email or phone required']);
+        $input = $req->all();
+        if (isset($input['username'])) {
+            $input['username'] = Accounts::normalizeUsername((string) $input['username']);
         }
-        if (!empty($d['email']) && DB::value('SELECT id FROM users WHERE email = ?', [$d['email']])) {
-            throw HttpException::conflict('An account with this email already exists');
+        $d = Validator::validate($input, [
+            'name'                  => 'required|string|min:2|max:120',
+            'username'              => 'required|string|max:30',
+            'email'                 => 'required|email|max:190',
+            'phone'                 => 'required|phone',
+            'password'              => 'required|string|max:100',
+            'password_confirmation' => 'nullable|string|max:100',
+            'role'                  => 'nullable|in:fan,creator,studio',
+        ], self::LABELS);
+
+        $errors = [];
+        if ($problem = Accounts::usernameProblem($d['username'])) {
+            $errors['username'] = $problem;
+        } elseif (DB::value('SELECT id FROM {users} WHERE username = ?', [$d['username']])) {
+            $errors['username'] = 'That username is taken. Try another one.';
         }
-        if (!empty($d['phone']) && DB::value('SELECT id FROM users WHERE phone = ?', [$d['phone']])) {
-            throw HttpException::conflict('An account with this phone number already exists');
+        if (DB::value('SELECT id FROM {users} WHERE email = ?', [$d['email']])) {
+            $errors['email'] = 'An account with this email already exists. Sign in instead, or use Forgot password.';
+        }
+        if (DB::value('SELECT id FROM {users} WHERE phone = ?', [$d['phone']])) {
+            $errors['phone'] = 'This phone number is already on another account.';
+        }
+        if (isset($d['password_confirmation']) && $d['password_confirmation'] !== $d['password']) {
+            $errors['password_confirmation'] = 'The two passwords do not match.';
+        }
+        try {
+            $strength = Accounts::checkPassword($d['password']);
+        } catch (HttpException $e) {
+            $errors += $e->errors;
+            $strength = 'weak';
+        }
+        if ($errors) {
+            throw HttpException::invalid('Your account could not be created. Please fix the highlighted fields.', $errors);
         }
 
-        $userId = DB::tx(static function () use ($d) {
+        $role = $d['role'] ?? 'fan';
+        $userId = DB::tx(static function () use ($d, $role) {
             $id = DB::insert('users', [
                 'name'          => $d['name'],
-                'email'         => $d['email'] ?? null,
-                'phone'         => $d['phone'] ?? null,
+                'username'      => $d['username'],
+                'email'         => $d['email'],
+                'phone'         => $d['phone'],
+                'country'       => (string) config('app.country', 'GH'),
                 'password_hash' => Auth::hashPassword($d['password']),
             ]);
-            Auth::addRole($id, 'fan');
+            Auth::addRole($id, 'fan');            // everyone can listen and buy
+            if ($role === 'creator') {
+                Auth::addRole($id, 'artist');
+                Auth::addRole($id, 'producer');
+            } elseif ($role === 'studio') {
+                Auth::addRole($id, 'studio_owner');
+            }
             return $id;
         });
-        return Response::created($this->session($userId));
+
+        $user = DB::one('SELECT * FROM {users} WHERE id = ?', [$userId]);
+        $welcome = EmailTemplates::welcome($user['name'], $user['username'], Auth::roles($userId));
+        Mailer::send($user['email'], $welcome['subject'], $welcome['html']);
+        $this->attempt($user['email'], $req->ip(), true);
+
+        // Confirm the email address with the same one-time code used at every sign-in.
+        $challenge = SignInCodes::start($user, 'login', $req->ip());
+        return Response::created($challenge + [
+            'registered'        => true,
+            'password_strength' => $strength,
+            'message'           => 'Your account is ready. Enter the code we emailed you to finish.',
+        ]);
     }
 
+    /** Step 1: email or username + password. A correct password sends a code by email. */
     public function login(Request $req): array
     {
         $d = Validator::validate($req->all(), [
-            'login'    => 'required|string|max:190',   // email or phone
+            'login'    => 'required|string|max:190',
             'password' => 'required|string|max:100',
-        ]);
-        $user = str_contains($d['login'], '@')
-            ? DB::one('SELECT * FROM users WHERE email = ?', [strtolower($d['login'])])
-            : DB::one('SELECT * FROM users WHERE phone = ?', [normalize_phone($d['login']) ?? '']);
+        ], self::LABELS);
+        $identifier = strtolower(trim($d['login']));
+        if (preg_match('/^\+?[\d\s\-()]{7,}$/', $identifier)) {
+            throw HttpException::invalid('Sign in with your email address or username.', [
+                'login' => 'Phone numbers cannot be used to sign in. Use your email address or username.',
+            ]);
+        }
+        $this->throttle($identifier, $req->ip());
 
-        if (!$user || !$user['password_hash'] || !password_verify($d['password'], $user['password_hash'])) {
-            throw new HttpException(401, 'Wrong email/phone or password');
+        $user = str_contains($identifier, '@')
+            ? DB::one('SELECT * FROM {users} WHERE email = ?', [$identifier])
+            : DB::one('SELECT * FROM {users} WHERE username = ?', [Accounts::normalizeUsername($identifier)]);
+
+        // Same work whether or not the account exists, so response times reveal nothing.
+        if ($user && $user['password_hash']) {
+            $ok = password_verify($d['password'], $user['password_hash']);
+        } else {
+            password_hash($d['password'], PASSWORD_BCRYPT);
+            $ok = false;
+        }
+        $this->attempt($identifier, $req->ip(), $ok);
+        if (!$ok || !$user) {
+            throw new HttpException(401, 'The email, username or password is not correct.', [
+                'password' => 'Check your email or username and password, then try again.',
+            ]);
         }
         if ($user['status'] !== 'active') {
-            throw HttpException::forbidden('This account is suspended');
+            throw HttpException::forbidden('This account is suspended. Contact the Nile Vijana team.');
         }
         if (password_needs_rehash($user['password_hash'], defined('PASSWORD_ARGON2ID') ? PASSWORD_ARGON2ID : PASSWORD_BCRYPT)) {
             DB::update('users', ['password_hash' => Auth::hashPassword($d['password'])], 'id = ?', [$user['id']]);
         }
+        return SignInCodes::start($user, 'login', $req->ip()) + [
+            'password_strength' => password_strength($d['password']),
+            'message'           => 'We sent a 6-digit code to your email. Enter it to finish signing in.',
+        ];
+    }
+
+    /** Step 2: the code from the email. Returns the session token. */
+    public function verifyLogin(Request $req): array
+    {
+        $d = Validator::validate($req->all(), ['ticket' => 'required|string|max:64', 'code' => 'required|string|max:12'], self::LABELS);
+        $user = SignInCodes::verify($d['ticket'], $d['code'], 'login');
         return $this->session((int) $user['id']);
     }
 
-    /** Send a 6-digit sign-in code by SMS. */
-    public function requestOtp(Request $req): array
+    public function resendLogin(Request $req): array
     {
-        $d = Validator::validate($req->all(), ['phone' => 'required|phone']);
-        $phone = $d['phone'];
-
-        $recentForPhone = (int) DB::value('SELECT COUNT(*) FROM otp_codes WHERE phone = ? AND created_at > ?', [$phone, now(-600)]);
-        $recentForIp = (int) DB::value('SELECT COUNT(*) FROM otp_codes WHERE ip = ? AND created_at > ?', [$req->ip(), now(-3600)]);
-        if ($recentForPhone >= 3 || $recentForIp >= 20) {
-            throw new HttpException(429, 'Too many codes requested. Wait a few minutes and try again.');
-        }
-
-        $code = (string) random_int(100000, 999999);
-        DB::insert('otp_codes', [
-            'phone'      => $phone,
-            'code_hash'  => $this->codeHash($phone, $code),
-            'ip'         => $req->ip(),
-            'expires_at' => now(600),
-        ]);
-        Sms::send($phone, "Your Nile Vijana code is $code. It expires in 10 minutes. Don't share it.");
-
-        $out = ['sent' => true, 'phone' => $phone, 'expires_in' => 600];
-        // Testing without a phone: in development with the 'log' SMS driver the code is returned.
-        if (config('app.env') === 'development' && config('sms.driver') === 'log') {
-            $out['dev_code'] = $code;
-        }
-        return $out;
+        $d = Validator::validate($req->all(), ['ticket' => 'required|string|max:64'], self::LABELS);
+        return SignInCodes::resend($d['ticket'], 'login') + ['message' => 'We sent a new code. The previous code no longer works.'];
     }
 
-    public function verifyOtp(Request $req): array
+    /** Forgot password: always answers the same way, so it never reveals who has an account. */
+    public function forgotPassword(Request $req): array
+    {
+        $d = Validator::validate($req->all(), ['login' => 'required|string|max:190'], self::LABELS);
+        $identifier = strtolower(trim($d['login']));
+        $this->throttle($identifier, $req->ip());
+        $user = str_contains($identifier, '@')
+            ? DB::one('SELECT * FROM {users} WHERE email = ?', [$identifier])
+            : DB::one('SELECT * FROM {users} WHERE username = ?', [Accounts::normalizeUsername($identifier)]);
+        $this->attempt('reset:' . $identifier, $req->ip(), false);
+
+        $generic = [
+            'otp_required' => true,
+            'ticket'       => bin2hex(random_bytes(24)),
+            'email'        => null,
+            'expires_in'   => (int) config('auth.otp_minutes', 10) * 60,
+            'resend_in'    => (int) config('auth.otp_resend_seconds', 60),
+            'message'      => 'If an account matches, we emailed it a 6-digit code to reset the password.',
+        ];
+        if (!$user || $user['status'] !== 'active' || empty($user['email'])) {
+            return $generic;
+        }
+        $recent = (int) DB::value("SELECT COUNT(*) FROM {auth_challenges} WHERE user_id = ? AND purpose = 'reset' AND created_at > ?", [$user['id'], now(-3600)]);
+        if ($recent >= 3) {
+            return $generic;
+        }
+        return array_merge($generic, SignInCodes::start($user, 'reset', $req->ip()), ['email' => null]);
+    }
+
+    public function resendReset(Request $req): array
+    {
+        $d = Validator::validate($req->all(), ['ticket' => 'required|string|max:64'], self::LABELS);
+        try {
+            return SignInCodes::resend($d['ticket'], 'reset') + ['email' => null, 'message' => 'If an account matches, we sent a new code.'];
+        } catch (HttpException $e) {
+            if ($e->status === 429) {
+                throw $e;
+            }
+            return ['otp_required' => true, 'ticket' => $d['ticket'], 'resend_in' => 60, 'message' => 'If an account matches, we sent a new code.'];
+        }
+    }
+
+    public function resetPassword(Request $req): array
     {
         $d = Validator::validate($req->all(), [
-            'phone' => 'required|phone',
-            'code'  => 'required|string|max:10',
-            'name'  => 'nullable|string|min:2|max:120',   // used when this phone is new
-        ]);
-        $otp = DB::one(
-            'SELECT * FROM otp_codes WHERE phone = ? AND used_at IS NULL AND expires_at > NOW() ORDER BY id DESC LIMIT 1',
-            [$d['phone']]
-        );
-        if (!$otp) {
-            throw HttpException::invalid('This code has expired. Request a new one.', ['code' => 'Expired']);
-        }
-        if ($otp['attempts'] >= 5) {
-            throw new HttpException(429, 'Too many wrong attempts. Request a new code.');
-        }
-        if (!hash_equals($otp['code_hash'], $this->codeHash($d['phone'], $d['code']))) {
-            DB::run('UPDATE otp_codes SET attempts = attempts + 1 WHERE id = ?', [$otp['id']]);
-            throw HttpException::invalid('Wrong code', ['code' => 'Wrong code']);
-        }
-        DB::update('otp_codes', ['used_at' => now()], 'id = ?', [$otp['id']]);
+            'ticket'   => 'required|string|max:64',
+            'code'     => 'required|string|max:12',
+            'password' => 'required|string|max:100',
+        ], self::LABELS + ['password' => 'New password']);
+        Accounts::checkPassword($d['password']);
+        $user = SignInCodes::verify($d['ticket'], $d['code'], 'reset');
+        DB::update('users', ['password_hash' => Auth::hashPassword($d['password'])], 'id = ?', [$user['id']]);
+        DB::run('DELETE FROM {auth_tokens} WHERE user_id = ?', [$user['id']]);      // sign out everywhere else
+        return $this->session((int) $user['id']) + ['password_reset' => true];
+    }
 
-        $user = DB::one('SELECT id, status FROM users WHERE phone = ?', [$d['phone']]);
-        $isNew = false;
-        if (!$user) {
-            $isNew = true;
-            $userId = DB::tx(static function () use ($d) {
-                $id = DB::insert('users', [
-                    'name'  => $d['name'] ?? ('Fan ' . substr($d['phone'], -4)),
-                    'phone' => $d['phone'],
-                ]);
-                Auth::addRole($id, 'fan');
-                return $id;
-            });
-        } else {
-            if ($user['status'] !== 'active') {
-                throw HttpException::forbidden('This account is suspended');
-            }
-            $userId = (int) $user['id'];
+    /** GET /api/auth/username?username=kofi.beats -> {available, problem} (sign-up form hint). */
+    public function usernameAvailable(Request $req): array
+    {
+        $username = Accounts::normalizeUsername((string) ($req->query['username'] ?? ''));
+        $problem = Accounts::usernameProblem($username);
+        if (!$problem && DB::value('SELECT id FROM {users} WHERE username = ?', [$username])) {
+            $problem = 'That username is taken. Try another one.';
         }
-        return $this->session($userId) + ['is_new' => $isNew];
+        return ['username' => $username, 'available' => $problem === null, 'problem' => $problem];
+    }
+
+    /** The old phone-code sign-in. Kept so old app versions get a clear answer instead of a 404. */
+    public function phoneSignInRemoved(Request $req): array
+    {
+        throw new HttpException(410, 'Signing in with a phone code is no longer available. Sign in with your email address or username and your password.');
     }
 
     public function logout(Request $req): Response
@@ -154,15 +251,26 @@ final class AuthController extends Controller
 
     private function session(int $userId): array
     {
-        $user = DB::one('SELECT * FROM users WHERE id = ?', [$userId]);
+        $user = DB::one('SELECT * FROM {users} WHERE id = ?', [$userId]);
         return [
             'token' => Auth::issueToken($userId),
             'user'  => Present::user($user, Auth::roles($userId)),
         ];
     }
 
-    private function codeHash(string $phone, string $code): string
+    /** Too many wrong passwords for one account or from one network: wait 15 minutes. */
+    private function throttle(string $identifier, string $ip): void
     {
-        return hash_hmac('sha256', $phone . '|' . $code, (string) config('app.key'));
+        $since = now(-900);
+        $byId = (int) DB::value('SELECT COUNT(*) FROM {login_attempts} WHERE identifier = ? AND success = 0 AND created_at > ?', [$identifier, $since]);
+        $byIp = (int) DB::value('SELECT COUNT(*) FROM {login_attempts} WHERE ip = ? AND success = 0 AND created_at > ?', [$ip, $since]);
+        if ($byId >= (int) config('auth.login_max_failures', 5) || $byIp >= (int) config('auth.login_ip_failures', 20)) {
+            throw new HttpException(429, 'Too many unsuccessful attempts. Wait 15 minutes, or reset your password.');
+        }
+    }
+
+    private function attempt(string $identifier, string $ip, bool $success): void
+    {
+        DB::insert('login_attempts', ['identifier' => mb_substr($identifier, 0, 190), 'ip' => $ip, 'success' => $success ? 1 : 0]);
     }
 }

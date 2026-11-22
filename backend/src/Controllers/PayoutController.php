@@ -13,7 +13,7 @@ use App\Support\Present;
 final class PayoutController extends Controller
 {
     /**
-     * POST /api/payouts {"amount": 20000, "phone": "0781234567", "provider": "MTN_MOMO_RWA"}
+     * POST /api/payouts {"amount": 200, "phone": "0241234567", "provider": "MTN"}  (GH₵; provider MTN, VOD or ATL)
      * phone/provider default to the payout number on the creator profile.
      */
     public function store(Request $req): Response
@@ -21,7 +21,7 @@ final class PayoutController extends Controller
         $d = Validator::validate($req->all(), [
             'amount'   => 'required|int|min:1',
             'phone'    => 'nullable|phone',
-            'provider' => 'nullable|in:MTN_MOMO_RWA,AIRTEL_RWA',
+            'provider' => 'nullable|in:MTN,VOD,ATL',
         ]);
         $p = PayoutService::request($req->user, $d['amount'], $d['phone'] ?? null, $d['provider'] ?? null);
         return Response::created(Present::payout($p) + ['next_step' => 'An admin approves withdrawals, usually within one working day.']);

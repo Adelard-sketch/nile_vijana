@@ -10,10 +10,10 @@ use App\Core\DB;
  *
  * Every money movement is written as one or more rows and never edited.
  * A balance is always SUM(amount), so it can be audited and recomputed.
- * Each movement balances to zero across accounts, for example a 10,000 RWF beat sale:
- *     user (producer)  +8,500   sale
- *     platform         +1,500   commission
- * (the 10,000 itself arrived from mobile money into the platform's pawaPay wallet)
+ * Each movement balances to zero across accounts, for example a GH₵ 200 beat sale:
+ *     user (producer)  +170   sale
+ *     platform          +30   commission
+ * (the GH₵ 200 itself arrived through Paystack into the platform's balance)
  */
 final class Ledger
 {
@@ -26,7 +26,7 @@ final class Ledger
             'account'  => $account,
             'user_id'  => $userId,
             'amount'   => $amount,
-            'currency' => (string) config('money.currency', 'RWF'),
+            'currency' => (string) config('money.currency', 'GHS'),
             'type'     => $type,
             'ref_type' => $refType,
             'ref_id'   => $refId,

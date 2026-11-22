@@ -39,6 +39,17 @@ final class Request
 
         $body = $_POST;
         $contentType = $_SERVER['CONTENT_TYPE'] ?? '';
+        // PHP silently drops the whole form when it is bigger than post_max_size; say so
+        // instead of reporting every field as missing.
+        $length = (int) ($_SERVER['CONTENT_LENGTH'] ?? 0);
+        if ($length > 0 && !$_POST && !$_FILES && str_contains($contentType, 'multipart/form-data')) {
+            $limit = self::iniBytes((string) ini_get('post_max_size'));
+            throw new HttpException(413, sprintf(
+                'The files are too large to upload together (%s MB). The server accepts up to %s MB per upload: use smaller files, or raise post_max_size and upload_max_filesize in php.ini.',
+                number_format($length / 1048576, 1),
+                number_format($limit / 1048576)
+            ), ['files' => 'The files are larger than the server allows.']);
+        }
         if (str_contains($contentType, 'application/json')) {
             $raw = file_get_contents('php://input') ?: '';
             $decoded = $raw === '' ? [] : json_decode($raw, true);
@@ -49,6 +60,19 @@ final class Request
         }
 
         return new self($method, $path, $_GET, $body, $_FILES, $_SERVER);
+    }
+
+    /** "64M" -> 67108864 */
+    public static function iniBytes(string $value): int
+    {
+        $value = trim($value);
+        $n = (int) $value;
+        return match (strtolower(substr($value, -1))) {
+            'g' => $n * 1073741824,
+            'm' => $n * 1048576,
+            'k' => $n * 1024,
+            default => $n,
+        };
     }
 
     public function input(string $key, mixed $default = null): mixed

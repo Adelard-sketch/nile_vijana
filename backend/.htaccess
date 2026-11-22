@@ -3,6 +3,9 @@
 Options -Indexes
 RewriteEngine On
 
+# Never serve dotfiles such as .env (secrets) or .gitignore
+RewriteRule (^|/)\. - [F,L]
+
 RewriteCond %{HTTP:Authorization} .
 RewriteRule .* - [E=HTTP_AUTHORIZATION:%{HTTP:Authorization}]
 

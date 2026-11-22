@@ -16,9 +16,10 @@ final class BookingController extends Controller
 {
     /**
      * POST /api/bookings
-     * {"room_id":1, "start_at":"2026-11-05 14:00", "hours":2, "phone":"0781234567", "provider":"MTN_MOMO_RWA", "notes":"..."}
+     * {"room_id":1, "start_at":"2026-12-05 14:00", "hours":2, "notes":"..."}  (deposit paid with Paystack)
      * Holds the slot and asks for the deposit by mobile money.
-     * Then poll GET /api/bookings/{id} until status is "confirmed".
+     * Then poll GET /api/bookings/{id} until status is "pending" (deposit paid, waiting for the
+     * studio) and later "confirmed" once the studio accepts.
      */
     public function store(Request $req): Response
     {
@@ -26,10 +27,10 @@ final class BookingController extends Controller
             'room_id'  => 'required|int',
             'start_at' => 'required|datetime',
             'hours'    => 'required|int|min:1|max:12',
-            'phone'    => 'required|phone',
-            'provider' => 'nullable|in:MTN_MOMO_RWA,AIRTEL_RWA',
+            'phone'    => 'nullable|phone',
+            'provider' => 'nullable|in:MTN,VOD,ATL',
             'notes'    => 'nullable|string|max:500',
-        ]);
+        ], ['room_id' => 'Room', 'start_at' => 'Date and start time', 'hours' => 'Number of hours', 'notes' => 'Notes for the studio']);
         [$phone, $provider] = $this->paymentPhone($d);
         $booking = BookingService::create($req->user, $d['room_id'], $d['start_at'], $d['hours'], $phone, $provider, $d['notes'] ?? null);
         return Response::created($booking);
@@ -41,8 +42,8 @@ final class BookingController extends Controller
         $as = ($req->query['as'] ?? 'artist') === 'studio' ? 'studio' : 'artist';
         $params = [$req->userId()];
         $sql = $as === 'studio'
-            ? 'SELECT b.id FROM bookings b JOIN studio_rooms r ON r.id = b.room_id JOIN studios s ON s.id = r.studio_id WHERE s.owner_id = ?'
-            : 'SELECT b.id FROM bookings b WHERE b.artist_id = ?';
+            ? 'SELECT b.id FROM {bookings} b JOIN {studio_rooms} r ON r.id = b.room_id JOIN {studios} s ON s.id = r.studio_id WHERE s.owner_id = ?'
+            : 'SELECT b.id FROM {bookings} b WHERE b.artist_id = ?';
         if (!empty($req->query['status'])) {
             $sql .= ' AND b.status = ?';
             $params[] = $req->query['status'];
@@ -66,19 +67,25 @@ final class BookingController extends Controller
         return BookingService::present($req->id());
     }
 
-    /** PATCH /api/bookings/{id} {"action": "cancel" | "complete" | "no_show" | "studio_no_show"} */
+    /**
+     * PATCH /api/bookings/{id}
+     * {"action": "accept" | "reject" | "cancel" | "complete" | "no_show" | "studio_no_show", "note": "reason (required to reject)"}
+     */
     public function action(Request $req): array
     {
-        $d = Validator::validate($req->all(), ['action' => 'required|in:cancel,complete,no_show,studio_no_show']);
-        return BookingService::action($req->user, $req->id(), $d['action']);
+        $d = Validator::validate($req->all(), [
+            'action' => 'required|in:accept,reject,cancel,complete,no_show,studio_no_show',
+            'note'   => 'nullable|string|max:500',
+        ]);
+        return BookingService::action($req->user, $req->id(), $d['action'], $d['note'] ?? null);
     }
 
-    /** POST /api/bookings/{id}/pay-balance {"phone":"...","provider":"..."} */
+    /** POST /api/bookings/{id}/pay-balance - opens a Paystack payment for what is still owed. */
     public function payBalance(Request $req): array
     {
         $d = Validator::validate($req->all(), [
-            'phone'    => 'required|phone',
-            'provider' => 'nullable|in:MTN_MOMO_RWA,AIRTEL_RWA',
+            'phone'    => 'nullable|phone',
+            'provider' => 'nullable|in:MTN,VOD,ATL',
         ]);
         [$phone, $provider] = $this->paymentPhone($d);
         return BookingService::payBalance($req->user, $req->id(), $phone, $provider);

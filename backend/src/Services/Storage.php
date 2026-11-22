@@ -75,17 +75,44 @@ final class Storage
         }
     }
 
+    /** Friendly names used in messages: "Audio file", "Cover artwork"... */
+    public const LABELS = [
+        'audio' => 'Audio file', 'cover' => 'Cover artwork', 'mp3' => 'MP3 file', 'wav' => 'WAV file',
+        'stems' => 'Stems (ZIP)', 'preview' => 'Preview audio', 'avatar' => 'Profile picture',
+        'picture' => 'Picture', 'photo' => 'Room photo',
+    ];
+
+    /**
+     * What is wrong with an uploaded file, in plain words, or null when it is fine.
+     * Lets a form report every problem at once before anything is saved.
+     */
+    public static function problem(?array $file, array $allowed, int $maxMb, string $field): ?string
+    {
+        try {
+            self::check($file ?? ['error' => UPLOAD_ERR_NO_FILE], $allowed, $maxMb, $field);
+            return null;
+        } catch (HttpException $e) {
+            return $e->errors[$field] ?? $e->getMessage();
+        }
+    }
+
     private static function check(array $file, array $allowed, int $maxMb, string $field): string
     {
+        $label = self::LABELS[$field] ?? ucfirst($field);
+        $types = strtoupper(implode(', ', array_unique(array_values($allowed))));
         $err = $file['error'] ?? UPLOAD_ERR_NO_FILE;
+        if ($err === UPLOAD_ERR_NO_FILE) {
+            throw HttpException::invalid("$label is required.", [$field => "$label is required."]);
+        }
         if ($err === UPLOAD_ERR_INI_SIZE || $err === UPLOAD_ERR_FORM_SIZE) {
-            throw HttpException::invalid('File too large', [$field => 'The server upload limit was exceeded (check upload_max_filesize in php.ini)']);
+            $limit = (int) floor(\App\Core\Request::iniBytes((string) ini_get('upload_max_filesize')) / 1048576);
+            throw HttpException::invalid('File too large', [$field => "$label is larger than the server allows ($limit MB)."]);
         }
         if ($err !== UPLOAD_ERR_OK || !is_uploaded_file($file['tmp_name'])) {
-            throw HttpException::invalid('Upload failed', [$field => 'The file did not upload correctly (error ' . $err . ')']);
+            throw HttpException::invalid('Upload failed', [$field => "$label did not upload completely. Please choose it again."]);
         }
         if ($file['size'] > $maxMb * 1024 * 1024) {
-            throw HttpException::invalid('File too large', [$field => "Maximum size is {$maxMb} MB"]);
+            throw HttpException::invalid('File too large', [$field => "$label is too large: the maximum is {$maxMb} MB."]);
         }
 
         $mime = (new \finfo(FILEINFO_MIME_TYPE))->file($file['tmp_name']) ?: 'application/octet-stream';
@@ -98,7 +125,7 @@ final class Storage
             return $nameExt;
         }
         throw HttpException::invalid('Wrong file type', [
-            $field => 'Allowed types: ' . implode(', ', array_unique(array_values($allowed))) . " (got $mime)",
+            $field => "$label must be one of these file types: $types.",
         ]);
     }
 

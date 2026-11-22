@@ -13,7 +13,10 @@ use App\Support\Present;
  * Studio booking with deposits held in escrow.
  *
  *  held      -> slot reserved for a few minutes while the artist pays the deposit
- *  confirmed -> deposit received (money sits in escrow, not with the studio yet)
+ *  pending   -> deposit received (in escrow); the studio must accept or reject the request
+ *               within money.booking_response_hours (default 48 h), otherwise it is refunded
+ *  confirmed -> the studio accepted (money still sits in escrow, not with the studio yet)
+ *  rejected  -> the studio declined (or did not answer in time); deposit refunded to the artist
  *  completed -> session happened; escrow released to the studio minus commission
  *  cancelled -> by the artist (refund if early enough), the studio (full refund) or the system
  *  no_show   -> artist did not come; studio keeps the deposit
@@ -34,7 +37,7 @@ final class BookingService
         $busy = DB::all(
             "SELECT start_at, end_at FROM bookings
               WHERE room_id = ? AND start_at < ? AND end_at > ?
-                AND (status IN ('confirmed','completed') OR (status = 'held' AND hold_expires_at > NOW()))",
+                AND (status IN ('pending','confirmed','completed') OR (status = 'held' AND hold_expires_at > NOW()))",
             [$room['id'], "$date 23:59:59", "$date 00:00:00"]
         );
 
@@ -68,13 +71,14 @@ final class BookingService
         return (int) DB::value(
             "SELECT COUNT(*) FROM bookings
               WHERE room_id = ? AND id <> ? AND start_at < ? AND end_at > ?
-                AND (status IN ('confirmed','completed') OR (status = 'held' AND hold_expires_at > NOW()))",
+                AND (status IN ('pending','confirmed','completed') OR (status = 'held' AND hold_expires_at > NOW()))",
             [$roomId, $exceptBookingId, $end, $start]
         ) > 0;
     }
 
-    public static function create(array $user, int $roomId, string $startAt, int $hours, string $phone, string $provider, ?string $notes): array
+    public static function create(array $user, int $roomId, string $startAt, int $hours, ?string $phone, ?string $provider, ?string $notes): array
     {
+        PaymentService::ensureReady();
         $room = DB::one(
             'SELECT r.*, s.status AS studio_status, s.owner_id FROM studio_rooms r
                JOIN studios s ON s.id = r.studio_id WHERE r.id = ?',
@@ -87,22 +91,22 @@ final class BookingService
             throw HttpException::invalid('You cannot book your own studio');
         }
         if ($hours < (int) $room['min_hours'] || $hours > 12) {
-            throw HttpException::invalid("Book between {$room['min_hours']} and 12 hours", ['hours' => 'Out of range']);
+            throw HttpException::invalid('Check the number of hours.', ['hours' => "This room is booked for at least {$room['min_hours']} " . ((int) $room['min_hours'] === 1 ? 'hour' : 'hours') . ' and at most 12 hours.']);
         }
 
         $start = strtotime($startAt);
         $end = $start + $hours * 3600;
         $date = date('Y-m-d', $start);
         if ($start <= time()) {
-            throw HttpException::invalid('Choose a time in the future', ['start_at' => 'In the past']);
+            throw HttpException::invalid('Choose a time in the future.', ['start_at' => 'Choose a date and time in the future.']);
         }
         if (date('i', $start) !== '00') {
-            throw HttpException::invalid('Sessions start on the hour, e.g. 14:00', ['start_at' => 'Not on the hour']);
+            throw HttpException::invalid('Sessions start on the hour.', ['start_at' => 'Sessions start on the hour, for example 14:00.']);
         }
         $open = DB::one('SELECT open_time, close_time FROM room_hours WHERE room_id = ? AND weekday = ?', [$roomId, (int) date('N', $start)]);
         $blocked = DB::value('SELECT 1 FROM room_blocked_dates WHERE room_id = ? AND blocked_date = ?', [$roomId, $date]);
         if (!$open || $blocked || $start < strtotime("$date {$open['open_time']}") || $end > strtotime("$date {$open['close_time']}")) {
-            throw HttpException::invalid('The studio is closed at that time', ['start_at' => 'Outside opening hours']);
+            throw HttpException::invalid('The studio is closed at that time.', ['start_at' => 'The studio is closed at that time. Check its opening hours and choose another time.']);
         }
 
         $total = (int) $room['hourly_rate'] * $hours;
@@ -131,13 +135,14 @@ final class BookingService
             ]);
         });
 
-        PaymentService::start('booking_deposit', (int) $user['id'], $deposit, $phone, $provider, null, $bookingId);
+        PaymentService::start('booking_deposit', (int) $user['id'], $deposit, $phone, $provider, null, $bookingId, "Deposit for studio booking #$bookingId");
         return self::present($bookingId);
     }
 
     /** Artist pays the rest of the session price in the app (optional). */
-    public static function payBalance(array $user, int $bookingId, string $phone, string $provider): array
+    public static function payBalance(array $user, int $bookingId, ?string $phone, ?string $provider): array
     {
+        PaymentService::ensureReady();
         $b = DB::one('SELECT * FROM bookings WHERE id = ?', [$bookingId]);
         if (!$b || (int) $b['artist_id'] !== (int) $user['id']) {
             throw HttpException::notFound('Booking');
@@ -153,7 +158,7 @@ final class BookingService
         if ($pending) {
             throw HttpException::conflict('A payment for this booking is already in progress');
         }
-        PaymentService::start('booking_balance', (int) $user['id'], $balance, $phone, $provider, null, $bookingId);
+        PaymentService::start('booking_balance', (int) $user['id'], $balance, $phone, $provider, null, $bookingId, "Balance for studio booking #$bookingId");
         return self::present($bookingId);
     }
 
@@ -203,8 +208,8 @@ final class BookingService
             return;
         }
 
-        DB::update('bookings', ['status' => 'confirmed', 'cancelled_by' => null, 'hold_expires_at' => null], 'id = ?', [$bookingId]);
-        self::notifyConfirmed($bookingId);
+        DB::update('bookings', ['status' => 'pending', 'cancelled_by' => null, 'hold_expires_at' => null], 'id = ?', [$bookingId]);
+        self::notifyRequested($bookingId);
     }
 
     public static function depositFailed(int $bookingId): void
@@ -214,14 +219,17 @@ final class BookingService
 
     /**
      * Actions:
+     *  accept          studio owner/admin: confirm a pending request
+     *  reject          studio owner/admin: decline a pending request with a reason (full refund)
      *  cancel          artist or studio owner (before the session starts)
      *  complete        studio owner/admin, after the start time: releases escrow to the studio
      *  no_show         studio owner/admin, after the start time: artist didn't come, studio keeps deposit
      *  studio_no_show  admin only: studio didn't open, full refund to the artist
      */
-    public static function action(array $user, int $bookingId, string $action): array
+    public static function action(array $user, int $bookingId, string $action, ?string $note = null): array
     {
-        DB::tx(static function () use ($user, $bookingId, $action) {
+        $notify = null;
+        DB::tx(static function () use ($user, $bookingId, $action, $note, &$notify) {
             $b = DB::one(
                 'SELECT b.*, s.owner_id FROM bookings b
                    JOIN studio_rooms r ON r.id = b.room_id JOIN studios s ON s.id = r.studio_id
@@ -242,8 +250,38 @@ final class BookingService
             $escrow = Ledger::escrowFor($bookingId);
 
             switch ($action) {
+                case 'accept':
+                case 'reject':
+                    if (!$isOwner && !$isAdmin) {
+                        throw HttpException::forbidden('Only the studio can answer a booking request');
+                    }
+                    if ($b['status'] !== 'pending') {
+                        throw HttpException::conflict('Only requests waiting for an answer can be accepted or rejected');
+                    }
+                    if ($action === 'accept') {
+                        if ($started) {
+                            throw HttpException::conflict('The session time has passed. Reject the request so the artist is refunded.');
+                        }
+                        DB::update('bookings', ['status' => 'confirmed', 'responded_at' => now(), 'studio_note' => $note ?: null], 'id = ?', [$bookingId]);
+                        $notify = 'accepted';
+                        break;
+                    }
+                    $note = trim((string) $note);
+                    if (mb_strlen($note) < 3) {
+                        throw HttpException::invalid('Tell the artist why you cannot take this session.', ['note' => 'Write a short reason for the artist.']);
+                    }
+                    self::refund($b, $escrow, 'Booking request declined by the studio: full refund');
+                    DB::update('bookings', [
+                        'status'       => 'rejected',
+                        'cancelled_by' => $isOwner ? 'studio' : 'admin',
+                        'studio_note'  => mb_substr($note, 0, 500),
+                        'responded_at' => now(),
+                    ], 'id = ?', [$bookingId]);
+                    $notify = 'rejected';
+                    break;
+
                 case 'cancel':
-                    if (!in_array($b['status'], ['held', 'confirmed'], true)) {
+                    if (!in_array($b['status'], ['held', 'pending', 'confirmed'], true)) {
                         throw HttpException::conflict('This booking can no longer be cancelled');
                     }
                     if ($started) {
@@ -251,7 +289,7 @@ final class BookingService
                     }
                     if ($isArtist) {
                         $hoursLeft = (strtotime($b['start_at']) - time()) / 3600;
-                        if ($b['status'] === 'held' || $hoursLeft >= (int) config('money.free_cancel_hours', 24)) {
+                        if (in_array($b['status'], ['held', 'pending'], true) || $hoursLeft >= (int) config('money.free_cancel_hours', 24)) {
                             self::refund($b, $escrow, 'Cancelled in time: full refund');
                         } else {
                             // Late cancellation: the studio keeps the deposit, anything extra goes back.
@@ -300,10 +338,55 @@ final class BookingService
                     break;
 
                 default:
-                    throw HttpException::invalid('action must be cancel, complete, no_show or studio_no_show');
+                    throw HttpException::invalid('action must be accept, reject, cancel, complete, no_show or studio_no_show');
             }
         });
+        if ($notify === 'accepted') {
+            self::notifyConfirmed($bookingId);
+        } elseif ($notify === 'rejected') {
+            self::notifyRejected($bookingId);
+        }
         return self::present($bookingId);
+    }
+
+    /**
+     * Requests the studio did not answer in time (or whose start time passed) are
+     * declined automatically and the deposit goes back to the artist's wallet.
+     * Called by Maintenance every minute.
+     */
+    public static function expireUnanswered(): int
+    {
+        $hours = max(1, (int) config('money.booking_response_hours', 48));
+        $ids = array_column(DB::all(
+            "SELECT id FROM bookings WHERE status = 'pending' AND (updated_at < ? OR start_at <= NOW()) ORDER BY id LIMIT 50",
+            [now(-3600 * $hours)]
+        ), 'id');
+        $done = 0;
+        foreach ($ids as $id) {
+            $changed = DB::tx(static function () use ($id) {
+                $b = DB::one(
+                    "SELECT b.*, s.owner_id FROM bookings b JOIN studio_rooms r ON r.id = b.room_id
+                       JOIN studios s ON s.id = r.studio_id WHERE b.id = ? AND b.status = 'pending' FOR UPDATE",
+                    [$id]
+                );
+                if (!$b) {
+                    return false;
+                }
+                self::refund($b, Ledger::escrowFor((int) $id), 'The studio did not answer in time: full refund');
+                DB::update('bookings', [
+                    'status'       => 'rejected',
+                    'cancelled_by' => 'system',
+                    'studio_note'  => 'The studio did not answer in time. Your deposit was refunded to your wallet.',
+                    'responded_at' => now(),
+                ], 'id = ?', [$id]);
+                return true;
+            });
+            if ($changed) {
+                self::notifyRejected((int) $id);
+                $done++;
+            }
+        }
+        return $done;
     }
 
     /** Move escrow money to the studio owner, minus the platform commission. */
@@ -328,6 +411,41 @@ final class BookingService
         $id = (int) $b['id'];
         Ledger::post('escrow', null, -$amount, 'booking_refund', 'booking', $id, $why);
         Ledger::post('user', (int) $b['artist_id'], $amount, 'booking_refund', 'booking', $id, $why);
+    }
+
+    private static function contacts(int $bookingId): ?array
+    {
+        return DB::one(
+            'SELECT b.start_at, b.hours, b.studio_note, s.name AS studio, owner.phone AS owner_phone, artist.phone AS artist_phone, artist.name AS artist_name
+               FROM bookings b JOIN studio_rooms r ON r.id = b.room_id JOIN studios s ON s.id = r.studio_id
+               JOIN users owner ON owner.id = s.owner_id JOIN users artist ON artist.id = b.artist_id
+              WHERE b.id = ?',
+            [$bookingId]
+        );
+    }
+
+    private static function notifyRequested(int $bookingId): void
+    {
+        $row = self::contacts($bookingId);
+        if (!$row) {
+            return;
+        }
+        $when = date('D j M, H:i', strtotime($row['start_at']));
+        $hours = (int) config('money.booking_response_hours', 48);
+        if ($row['owner_phone']) {
+            Sms::send($row['owner_phone'], "Nile Vijana: booking request #$bookingId at {$row['studio']} - {$row['artist_name']}, $when, {$row['hours']}h. Deposit paid. Accept or reject it in your dashboard within {$hours}h.");
+        }
+        if ($row['artist_phone']) {
+            Sms::send($row['artist_phone'], "Nile Vijana: deposit received for {$row['studio']} on $when. Waiting for the studio to accept (booking #$bookingId).");
+        }
+    }
+
+    private static function notifyRejected(int $bookingId): void
+    {
+        $row = self::contacts($bookingId);
+        if ($row && $row['artist_phone']) {
+            Sms::send($row['artist_phone'], "Nile Vijana: {$row['studio']} could not take booking #$bookingId. {$row['studio_note']} Your deposit is back in your wallet.");
+        }
     }
 
     private static function notifyConfirmed(int $bookingId): void

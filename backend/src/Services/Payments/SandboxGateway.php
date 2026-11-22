@@ -6,10 +6,12 @@ namespace App\Services\Payments;
 use App\Core\DB;
 
 /**
- * Fake mobile money for development and class demos. No account needed.
+ * Simulated payments for AUTOMATED TESTS ONLY (PAYMENT_GATEWAY=sandbox).
+ * It is refused when app.env is 'production' (see PaymentService::gateway), and the
+ * normal setting is Paystack: real or test payments, always confirmed by Paystack.
  *  - Every payment and payout is accepted.
  *  - It completes once it is older than payments.sandbox.complete_after_seconds.
- *  - Phone numbers ending in 99 FAIL, so you can demo the failure path.
+ *  - Phone numbers ending in 99 FAIL, so the failure path can be tested.
  */
 final class SandboxGateway implements PaymentGateway
 {
@@ -18,7 +20,7 @@ final class SandboxGateway implements PaymentGateway
         return 'sandbox';
     }
 
-    public function initiateDeposit(string $id, int $amount, string $currency, string $phone, string $provider): array
+    public function initiateDeposit(string $id, int $amount, string $currency, ?string $phone, ?string $provider, array $context = []): array
     {
         app_log('payments', "sandbox deposit $id: $amount $currency from $phone ($provider)");
         return ['state' => 'accepted', 'message' => null];
@@ -30,7 +32,7 @@ final class SandboxGateway implements PaymentGateway
         return $this->simulate($row, 'SBX-D-');
     }
 
-    public function initiatePayout(string $id, int $amount, string $currency, string $phone, string $provider): array
+    public function initiatePayout(string $id, int $amount, string $currency, string $phone, string $provider, array $context = []): array
     {
         app_log('payments', "sandbox payout $id: $amount $currency to $phone ($provider)");
         return ['state' => 'accepted', 'message' => null];
@@ -51,7 +53,7 @@ final class SandboxGateway implements PaymentGateway
         if (strtotime($row['created_at']) > time() - $wait) {
             return ['state' => 'pending', 'provider_txn_id' => null, 'message' => null];
         }
-        if (str_ends_with($row['phone'], '99')) {
+        if (str_ends_with((string) $row['phone'], '99')) {
             return ['state' => 'failed', 'provider_txn_id' => null, 'message' => 'Sandbox: payer declined (number ends in 99)'];
         }
         return ['state' => 'completed', 'provider_txn_id' => $prefix . strtoupper(bin2hex(random_bytes(5))), 'message' => null];

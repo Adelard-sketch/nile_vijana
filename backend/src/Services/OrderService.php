@@ -18,8 +18,9 @@ use App\Support\Present;
  */
 final class OrderService
 {
-    public static function create(array $user, array $items, string $phone, string $provider): array
+    public static function create(array $user, array $items, ?string $phone, ?string $provider): array
     {
+        PaymentService::ensureReady();
         $uid = (int) $user['id'];
         $rate = (float) config('money.commission_sales', 0.15);
         $lines = [];
@@ -78,9 +79,10 @@ final class OrderService
                 if ($creatorId === $uid) {
                     throw HttpException::invalid("Item $n: you cannot tip yourself");
                 }
-                $min = (int) config('money.min_tip', 100);
-                if ($amount < $min || $amount > 1000000) {
-                    throw HttpException::invalid("Item $n: a tip must be between $min and 1,000,000 RWF");
+                $min = (int) config('money.min_tip', 5);
+                $max = (int) config('money.max_tip', 5000);
+                if ($amount < $min || $amount > $max) {
+                    throw HttpException::invalid("A tip must be between GH₵ $min and GH₵ " . number_format($max) . '.', ['amount' => "Tip amount must be between GH₵ $min and GH₵ " . number_format($max) . '.']);
                 }
                 $lines[] = [
                     'item_type' => 'tip', 'seller_id' => $creatorId,
@@ -117,7 +119,7 @@ final class OrderService
             }
 
             $orderId = DB::insert('orders', [
-                'buyer_id' => $uid, 'total' => $total, 'currency' => (string) config('money.currency', 'RWF'),
+                'buyer_id' => $uid, 'total' => $total, 'currency' => (string) config('money.currency', 'GHS'),
                 'phone' => $phone, 'provider' => $provider,
             ]);
             foreach ($lines as $line) {
@@ -127,7 +129,8 @@ final class OrderService
             return $orderId;
         });
 
-        PaymentService::start('order', $uid, $total, $phone, $provider, $orderId);
+        $what = count($lines) === 1 ? $lines[0]['title'] : count($lines) . ' items';
+        PaymentService::start('order', $uid, $total, $phone, $provider, $orderId, null, "Order #$orderId: $what");
         return self::present($orderId);
     }
 
@@ -169,7 +172,7 @@ final class OrderService
             $seller = DB::one('SELECT phone FROM users WHERE id = ?', [$it['seller_id']]);
             if ($seller && $seller['phone']) {
                 $what = $type === 'tip' ? 'a tip' : '"' . $it['title'] . '"';
-                Sms::send($seller['phone'], 'Nile Vijana: you earned ' . number_format($price - $commission) . " RWF from $what.");
+                Sms::send($seller['phone'], 'Nile Vijana: you earned ' . money_format_ghs($price - $commission) . " from $what.");
             }
         }
     }

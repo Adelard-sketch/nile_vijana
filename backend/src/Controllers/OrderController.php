@@ -18,17 +18,17 @@ final class OrderController extends Controller
 {
     /**
      * POST /api/orders
-     * {"items":[{"type":"license","license_tier_id":3},{"type":"tip","creator_id":2,"amount":1000}],
-     *  "phone":"0781234567","provider":"MTN_MOMO_RWA"}
-     * The buyer gets a prompt on their phone. Poll GET /api/orders/{id} until status is "paid".
+     * {"items":[{"type":"license","license_tier_id":3},{"type":"tip","creator_id":2,"amount":20}]}
+     * The response's payment has checkout_url and access_code: open the Paystack popup (or go to
+     * checkout_url). Then GET /api/payments/{reference} or poll GET /api/orders/{id} until "paid".
      */
     public function store(Request $req): Response
     {
         $d = Validator::validate($req->all(), [
             'items'    => 'required|array|min:1|max:20',
-            'phone'    => 'required|phone',
-            'provider' => 'nullable|in:MTN_MOMO_RWA,AIRTEL_RWA',
-        ]);
+            'phone'    => 'nullable|phone',
+            'provider' => 'nullable|in:MTN,VOD,ATL',
+        ], ['items' => 'Cart']);
         [$phone, $provider] = $this->paymentPhone($d);
         return Response::created(OrderService::create($req->user, $d['items'], $phone, $provider));
     }

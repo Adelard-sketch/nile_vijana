@@ -31,9 +31,37 @@ final class DB
         return self::$pdo;
     }
 
+    /** Return the configured table prefix (e.g. "nv_"). Empty string when not set. */
+    public static function prefix(): string
+    {
+        return (string) config('db.prefix', '');
+    }
+
+    /**
+     * Prefix a bare table name.
+     * Use this inside raw SQL strings: DB::tbl('users') → 'nv_users'
+     * Example: DB::run('SELECT * FROM ' . DB::tbl('users') . ' WHERE id = ?', [$id])
+     */
+    public static function tbl(string $table): string
+    {
+        return self::prefix() . $table;
+    }
+
+    /**
+     * Replace every occurrence of {table_name} tokens in a SQL string with the
+     * prefixed table name, so raw queries stay readable and work on any prefix.
+     * Example: DB::sql('SELECT * FROM {users} WHERE id = ?')
+     *          becomes 'SELECT * FROM nv_users WHERE id = ?'
+     */
+    public static function sql(string $query): string
+    {
+        $prefix = self::prefix();
+        return preg_replace_callback('/\{(\w+)\}/', static fn ($m) => $prefix . $m[1], $query);
+    }
+
     public static function run(string $sql, array $params = []): PDOStatement
     {
-        $stmt = self::pdo()->prepare($sql);
+        $stmt = self::pdo()->prepare(self::sql($sql));
         $stmt->execute($params);
         return $stmt;
     }
@@ -61,11 +89,12 @@ final class DB
         $cols = array_keys($row);
         $sql = sprintf(
             'INSERT INTO %s (%s) VALUES (%s)',
-            $table,
+            self::prefix() . $table,
             implode(', ', $cols),
             implode(', ', array_map(static fn ($c) => ':' . $c, $cols))
         );
-        self::run($sql, $row);
+        $stmt = self::pdo()->prepare($sql);
+        $stmt->execute($row);
         return (int) self::pdo()->lastInsertId();
     }
 
@@ -73,7 +102,7 @@ final class DB
     public static function update(string $table, array $row, string $where, array $params = []): int
     {
         $set = implode(', ', array_map(static fn ($c) => "$c = ?", array_keys($row)));
-        return self::run("UPDATE $table SET $set WHERE $where", [...array_values($row), ...$params])->rowCount();
+        return self::run('UPDATE ' . self::prefix() . $table . " SET $set WHERE $where", [...array_values($row), ...$params])->rowCount();
     }
 
     /**

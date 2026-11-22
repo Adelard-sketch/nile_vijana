@@ -33,6 +33,9 @@ final class Maintenance
               WHERE status = 'held' AND hold_expires_at < NOW()"
         )->rowCount();
 
+        // 2b. Booking requests the studio did not answer in time: decline and refund.
+        $stats['requests_expired'] = BookingService::expireUnanswered();
+
         // 3. Expire orders nobody paid for.
         $stats['orders_expired'] = DB::run(
             "UPDATE orders SET status = 'expired' WHERE status = 'pending' AND created_at < ?",
@@ -49,6 +52,8 @@ final class Maintenance
         // 5. Tidy up old sign-in data.
         DB::run('DELETE FROM auth_tokens WHERE expires_at < NOW()');
         DB::run('DELETE FROM otp_codes WHERE created_at < ?', [now(-86400)]);
+        DB::run('DELETE FROM auth_challenges WHERE ticket_expires_at < ?', [now(-86400)]);
+        DB::run('DELETE FROM login_attempts WHERE created_at < ?', [now(-86400 * 30)]);
 
         return $stats;
     }

@@ -13,7 +13,7 @@
             return '';
         }
     };
-    const money = (amount) => amount == null ? 'Ask for rates' : `${Number(amount).toLocaleString()} RWF`;
+    const money = (amount) => amount == null ? 'Ask for rates' : `${Number(amount).toLocaleString()} GHS`;
     const request = async (path, options = {}) => {
         const headers = { Accept: 'application/json', ...(options.headers || {}) };
         const token = localStorage.getItem(tokenKey);

@@ -2391,6 +2391,564 @@
           }
         }
       ]
+    },
+    {
+      "name": "8. Dashboards, onboarding and approvals",
+      "description": "Added with the dashboard redesign. Uploads by creators wait for review; admins approve or reject with a reason; studios answer paid booking requests.",
+      "item": [
+        {
+          "name": "Admin: onboard any account type",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/admin/onboard",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "admin",
+                "onboard"
+              ]
+            },
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "type",
+                  "type": "text",
+                  "value": "choir"
+                },
+                {
+                  "key": "display_name",
+                  "type": "text",
+                  "value": "Chorale Example"
+                },
+                {
+                  "key": "city",
+                  "type": "text",
+                  "value": "Huye"
+                },
+                {
+                  "key": "members_count",
+                  "type": "text",
+                  "value": "24"
+                },
+                {
+                  "key": "phone",
+                  "type": "text",
+                  "value": "0781234567"
+                },
+                {
+                  "key": "password",
+                  "type": "text",
+                  "value": "Start@1234"
+                },
+                {
+                  "key": "picture",
+                  "type": "file",
+                  "src": ""
+                }
+              ]
+            },
+            "description": "type = artist | choir | producer | manager | vocal_coach | studio. Studio needs city, address, equipment and rooms (JSON). Manager takes managed_artists (JSON list of ids)."
+          }
+        },
+        {
+          "name": "Admin: overview",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/admin/overview",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "admin",
+                "overview"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Admin: activity feed",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/admin/activity?limit=30",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "admin",
+                "activity"
+              ],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "30"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Admin: songs waiting for review",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/admin/tracks?status=in_review",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "admin",
+                "tracks"
+              ],
+              "query": [
+                {
+                  "key": "status",
+                  "value": "in_review"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Admin: beats waiting for review",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/admin/beats?status=in_review",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "admin",
+                "beats"
+              ],
+              "query": [
+                {
+                  "key": "status",
+                  "value": "in_review"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Admin: approve a song",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/admin/tracks/{{track_id}}/review",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "admin",
+                "tracks",
+                "{{track_id}}",
+                "review"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"decision\": \"approve\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Admin: reject a song with a reason",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/admin/tracks/{{track_id}}/review",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "admin",
+                "tracks",
+                "{{track_id}}",
+                "review"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"decision\": \"reject\",\n  \"note\": \"The cover has a watermark, please upload the clean artwork.\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Admin: verify a studio",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/admin/studios/{{studio_id}}/review",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "admin",
+                "studios",
+                "{{studio_id}}",
+                "review"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"decision\": \"approve\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Admin: studio bookings",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/admin/bookings?status=pending",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "admin",
+                "bookings"
+              ],
+              "query": [
+                {
+                  "key": "status",
+                  "value": "pending"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Admin: profiles by type",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/admin/creator-profiles?type=musician",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "admin",
+                "creator-profiles"
+              ],
+              "query": [
+                {
+                  "key": "type",
+                  "value": "musician"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Admin: upload a song for an artist (publish now)",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/tracks",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "tracks"
+              ]
+            },
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "title",
+                  "type": "text",
+                  "value": "Song title"
+                },
+                {
+                  "key": "creator_id",
+                  "type": "text",
+                  "value": "3"
+                },
+                {
+                  "key": "publish",
+                  "type": "text",
+                  "value": "live"
+                },
+                {
+                  "key": "genre",
+                  "type": "text",
+                  "value": "Gospel"
+                },
+                {
+                  "key": "audio",
+                  "type": "file",
+                  "src": ""
+                },
+                {
+                  "key": "cover",
+                  "type": "file",
+                  "src": ""
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Creator: resubmit a rejected song",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/tracks/{{track_id}}/resubmit",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "tracks",
+                "{{track_id}}",
+                "resubmit"
+              ]
+            },
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "title",
+                  "type": "text",
+                  "value": "Song title (fixed)"
+                },
+                {
+                  "key": "cover",
+                  "type": "file",
+                  "src": ""
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Creator: resubmit a rejected beat",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/beats/{{beat_id}}/resubmit",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "beats",
+                "{{beat_id}}",
+                "resubmit"
+              ]
+            },
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "tiers",
+                  "type": "text",
+                  "value": "[{\"tier\":\"mp3_lease\",\"price\":15000}]"
+                },
+                {
+                  "key": "preview",
+                  "type": "file",
+                  "src": ""
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Dashboard: wallet and earnings",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/dashboard/wallet",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "dashboard",
+                "wallet"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Dashboard: artist or choir",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/dashboard/music?range=30",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "dashboard",
+                "music"
+              ],
+              "query": [
+                {
+                  "key": "range",
+                  "value": "30"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Dashboard: producer",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/dashboard/beats?range=30",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "dashboard",
+                "beats"
+              ],
+              "query": [
+                {
+                  "key": "range",
+                  "value": "30"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Dashboard: studio owner",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/dashboard/studio?range=30",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "dashboard",
+                "studio"
+              ],
+              "query": [
+                {
+                  "key": "range",
+                  "value": "30"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Dashboard: manager",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/dashboard/manager?range=30",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "dashboard",
+                "manager"
+              ],
+              "query": [
+                {
+                  "key": "range",
+                  "value": "30"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Studio: accept a booking request",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/bookings/{{booking_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "bookings",
+                "{{booking_id}}"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"action\": \"accept\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Studio: decline a booking request",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/bookings/{{booking_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "bookings",
+                "{{booking_id}}"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"action\": \"reject\",\n  \"note\": \"The engineer is away that day.\"\n}"
+            }
+          }
+        }
+      ]
     }
   ]
 }

@@ -5,10 +5,11 @@ namespace App\Services\Payments;
 
 /**
  * pawaPay API v2 (mobile money in 20+ African markets, including
- * MTN MoMo and Airtel Money in Rwanda).
+ * MTN, Telecel and AirtelTigo in Ghana).
  * Docs: https://docs.pawapay.io/v2/docs/deposits and /v2/docs/payouts
  *
- * Provider codes for Rwanda: MTN_MOMO_RWA, AIRTEL_RWA.
+ * Kept as an alternative to Paystack (set PAYMENT_GATEWAY=pawapay and payments.pawapay
+ * base_url/token in config). Ghana networks are mapped to pawaPay's provider codes.
  */
 final class PawaPayGateway implements PaymentGateway
 {
@@ -29,8 +30,17 @@ final class PawaPayGateway implements PaymentGateway
         return 'pawapay';
     }
 
-    public function initiateDeposit(string $id, int $amount, string $currency, string $phone, string $provider): array
+    private static function providerCode(string $provider): string
     {
+        return ['MTN' => 'MTN_MOMO_GHA', 'VOD' => 'VODAFONE_GHA', 'ATL' => 'AIRTELTIGO_GHA'][$provider] ?? $provider;
+    }
+
+    public function initiateDeposit(string $id, int $amount, string $currency, ?string $phone, ?string $provider, array $context = []): array
+    {
+        if (!$phone || !$provider) {
+            return ['state' => 'rejected', 'message' => 'Enter a mobile money number to pay with pawaPay'];
+        }
+        $provider = self::providerCode($provider);
         [$code, $res] = $this->request('POST', '/v2/deposits', [
             'depositId' => $id,
             'amount'    => (string) $amount,
@@ -48,8 +58,9 @@ final class PawaPayGateway implements PaymentGateway
         return $this->statusResult(...$this->request('GET', '/v2/deposits/' . rawurlencode($id)));
     }
 
-    public function initiatePayout(string $id, int $amount, string $currency, string $phone, string $provider): array
+    public function initiatePayout(string $id, int $amount, string $currency, string $phone, string $provider, array $context = []): array
     {
+        $provider = self::providerCode($provider);
         [$code, $res] = $this->request('POST', '/v2/payouts', [
             'payoutId'  => $id,
             'amount'    => (string) $amount,

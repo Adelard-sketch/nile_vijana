@@ -22,6 +22,17 @@ spl_autoload_register(static function (string $class): void {
 
 require BASE_PATH . '/src/helpers.php';
 
+// Secrets (Paystack keys, SMTP password, Spotify credentials) live in backend/.env,
+// never in the code or in the frontend. Real environment variables win over the file.
+load_env_file(BASE_PATH . '/.env');
+// Never let a deployed .env.local replace production credentials. Local HTTP
+// requests can use the XAMPP override; CLI users can opt in with NV_USE_LOCAL_ENV=true.
+$localRequest = in_array($_SERVER['HTTP_HOST'] ?? '', ['localhost', '127.0.0.1', '[::1]'], true)
+    && in_array($_SERVER['REMOTE_ADDR'] ?? '', ['127.0.0.1', '::1'], true);
+if ($localRequest || env('NV_USE_LOCAL_ENV', false) === true) {
+    load_env_file(BASE_PATH . '/.env.local', true);
+}
+
 $configFile = BASE_PATH . '/config/config.php';
 if (!is_file($configFile)) {
     $msg = 'Missing config/config.php. Copy config/config.example.php to config/config.php and edit it.';
@@ -36,7 +47,7 @@ if (!is_file($configFile)) {
 }
 
 App\Core\Config::load(require $configFile);
-date_default_timezone_set((string) config('app.timezone', 'Africa/Kigali'));
+date_default_timezone_set((string) config('app.timezone', 'Africa/Accra'));
 
 if (config('app.env') === 'production' && str_starts_with((string) config('app.key'), 'CHANGE_ME')) {
     throw new RuntimeException('Set app.key in config/config.php before running in production.');

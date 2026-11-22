@@ -1,0 +1,49 @@
+# Static Nile Vijana frontend
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+    RewriteBase /nilevijanacreatives/frontend/
+
+    # Keep old bookmarks working without executing frontend PHP.
+    RewriteRule ^(.+)\.php$ $1.html [R=301,L,NC]
+
+    RewriteCond %{REQUEST_FILENAME} -d
+    RewriteCond %{REQUEST_URI} !(.*)/$
+    RewriteRule ^(.*)$ $1/ [L,R=301]
+</IfModule>
+
+# Disable directory browsing
+Options -Indexes
+
+# Default static document
+DirectoryIndex index.html
+
+# Security headers
+<IfModule mod_headers.c>
+    Header set X-Content-Type-Options "nosniff"
+    Header set X-Frame-Options "SAMEORIGIN"
+    Header set X-XSS-Protection "1; mode=block"
+    Header set Referrer-Policy "strict-origin-when-cross-origin"
+</IfModule>
+
+# Compression
+<IfModule mod_deflate.c>
+    AddOutputFilterByType DEFLATE text/html text/plain text/xml text/css text/javascript application/javascript application/json
+</IfModule>
+
+# Browser caching
+<IfModule mod_expires.c>
+    ExpiresActive On
+    ExpiresByType image/jpg "access plus 1 year"
+    ExpiresByType image/jpeg "access plus 1 year"
+    ExpiresByType image/png "access plus 1 year"
+    ExpiresByType image/gif "access plus 1 year"
+    ExpiresByType image/webp "access plus 1 year"
+    ExpiresByType image/svg+xml "access plus 1 year"
+    ExpiresByType text/css "access plus 1 month"
+    ExpiresByType application/javascript "access plus 1 month"
+    ExpiresByType application/font-woff2 "access plus 1 year"
+</IfModule>
+
+# Error documents
+ErrorDocument 404 /nilevijanacreatives/frontend/404.html
+ErrorDocument 500 /nilevijanacreatives/frontend/404.html

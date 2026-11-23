@@ -13,8 +13,41 @@ final class HealthController extends Controller
     public function health(Request $req): array
     {
         $dbOk = true;
+        $studioSchema = [];
         try {
             DB::value('SELECT 1');
+            $required = [
+                'studios' => ['id', 'owner_id', 'name', 'slug', 'city', 'status', 'cover_path', 'review_note'],
+                'studio_rooms' => ['id', 'studio_id', 'name', 'hourly_rate', 'status'],
+                'bookings' => ['id', 'room_id', 'artist_id', 'start_at', 'end_at', 'hours', 'total', 'deposit', 'amount_paid', 'status', 'updated_at'],
+                'payments' => ['id', 'booking_id', 'purpose', 'status'],
+                'ledger_entries' => ['id', 'account', 'user_id', 'amount', 'type', 'ref_type', 'ref_id', 'created_at'],
+                'payouts' => ['id', 'user_id', 'amount', 'status'],
+            ];
+            $missingTables = [];
+            $missingColumns = [];
+            foreach ($required as $table => $columns) {
+                if (!DB::value(
+                    'SELECT 1 FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?',
+                    [$table]
+                )) {
+                    $missingTables[] = $table;
+                    continue;
+                }
+                foreach ($columns as $column) {
+                    if (!DB::value(
+                        'SELECT 1 FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = ?',
+                        [$table, $column]
+                    )) {
+                        $missingColumns[] = "$table.$column";
+                    }
+                }
+            }
+            $studioSchema = [
+                'ok' => $missingTables === [] && $missingColumns === [],
+                'missing_tables' => $missingTables,
+                'missing_columns' => $missingColumns,
+            ];
         } catch (\Throwable) {
             $dbOk = false;
         }
@@ -24,6 +57,7 @@ final class HealthController extends Controller
             'time'     => date('c'),
             'database' => $dbOk ? 'connected' : 'not reachable - check config/config.php',
             'payments' => config('payments.gateway'),
+            'studio_dashboard_schema' => $studioSchema,
         ];
     }
 

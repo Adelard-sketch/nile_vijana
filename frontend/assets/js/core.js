@@ -64,6 +64,10 @@
             const error = new Error(data.error || data.message || `Request failed (${response.status})`);
             error.status = response.status;
             error.errors = data.errors || {};
+            if (data.debug) {
+                error.debug = data.debug;
+                if (data.debug.message) error.message = `${data.error || data.message || 'Request failed'}: ${data.debug.message}`;
+            }
             throw error;
         }
         return data;
